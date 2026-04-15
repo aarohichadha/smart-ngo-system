@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { SmartMatchDialog } from "@/components/SmartMatchDialog";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -144,7 +145,7 @@ export default function Issues() {
           .select("*")
           .eq("ngo_user_id", user.id)
           .neq("status", "resolved"),
-        supabase.from("volunteers").select("id, name").eq("ngo_user_id", user.id),
+        supabase.from("volunteers").select("*").eq("ngo_user_id", user.id),
       ]);
 
       const dbIssues = (issuesRes.data || []) as Issue[];
@@ -154,6 +155,19 @@ export default function Issues() {
     };
     fetchData();
   }, []);
+
+  const refreshData = async () => {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const [issuesRes, volRes] = await Promise.all([
+      supabase.from("issues").select("*").eq("ngo_user_id", user.id).neq("status", "resolved"),
+      supabase.from("volunteers").select("*").eq("ngo_user_id", user.id),
+    ]);
+    setIssues((issuesRes.data || []) as Issue[]);
+    setVolunteers((volRes.data || []) as Volunteer[]);
+    setLoading(false);
+  };
 
   const sectors = [...new Set(issues.map((i) => i.sector).filter(Boolean))] as string[];
 

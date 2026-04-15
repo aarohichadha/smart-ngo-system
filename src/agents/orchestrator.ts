@@ -1,3 +1,7 @@
+import { supabase } from "@/integrations/supabase/client";
+import { generateLocalEmbedding, analyzeSkillsForIssue } from "@/services/geminiService";
+import { calculateCosineSimilarity, calculateLocationScore, calculateFinalMatchScore } from "@/lib/vectorUtils";
+
 export interface AgentLog {
   agent: string;
   timestamp: string;
@@ -638,7 +642,7 @@ Report text:
 ${safeRawInput}`;
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -726,7 +730,7 @@ Volunteers:
 ${JSON.stringify(compactVolunteers)}
 `;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -782,7 +786,7 @@ Data:
 ${JSON.stringify(planContext)}
 `;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -818,7 +822,7 @@ ${JSON.stringify(
     }))
   )}`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -870,7 +874,7 @@ ${JSON.stringify(
     }))
   )}`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1113,121 +1117,107 @@ const findBackupVolunteer = (
 
 // ============ TOOL: MATCH ============
 const matchTool = async (state: AgentState): Promise<{ state: AgentState; confidence: number }> => {
-  console.log('[Orchestrator] Match tool running', { issueCount: state.issues.length, volunteerCount: state.volunteers.length });
+  console.log('[Orchestrator] Integrated Smart Match tool running', { 
+    issueCount: state.issues.length, 
+    volunteerCount: state.volunteers.length 
+  });
+  
   const matched = [...state.issues];
   const assignments: any[] = [];
   const volunteerLoads: Record<string, number> = {};
 
-  // Initialize loads
+  // 1. Initialize loads for active volunteers
   state.volunteers.forEach((v) => {
     volunteerLoads[v.id] = 0;
   });
 
-  // 1) Try Gemini-based assignment first
-  const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  console.log('[Matching Tool] Gemini API key check:', !!geminiKey);
-  
-  if (geminiKey && geminiKey !== 'your-gemini-api-key-here') {
-    try {
-      console.log('[Matching Tool] Calling Gemini assignment with', matched.length, 'issues');
-      const plan = await assignWithGemini(matched, state.volunteers, geminiKey);
-      console.log('[Matching Tool] Gemini returned', plan.length, 'assignments');
+  try {
+    // 2. Process issues for matching
+    for (let i = 0; i < matched.length; i++) {
+      const issue = matched[i];
+      if (issue.status === 'assigned') continue;
+
+      console.log(`[SmartMatch] Processing issue: ${issue.issue_summary?.substring(0, 30)}...`);
+
+      // A. Dynamic skill inference for the issue
+      const requiredSkillsList = await analyzeSkillsForIssue(issue.issue_summary, issue.sector);
       
-      for (const item of plan) {
-        const idx = item.issue_index;
-        if (idx < 0 || idx >= matched.length) {
-          console.warn('[Matching] Invalid index:', idx);
-          continue;
-        }
-        if (matched[idx]?.status === 'assigned') {
-          console.log('[Matching] Already assigned at index:', idx);
-          continue;
-        }
+      // B. Generate embedding for the requirement using PYTHON BACKEND
+      const requiredEmbedding = await generateLocalEmbedding(requiredSkillsList);
 
-        const volunteer = state.volunteers.find((v) => v.id === item.volunteer_id && v.is_active);
-        if (!volunteer) {
-          console.warn('[Matching] Volunteer not found:', item.volunteer_id);
-          continue;
+      // C. Score all active volunteers
+      const activeVolunteers = state.volunteers.filter(v => v.is_active);
+      
+      // OPTIONAL: Fetch historical success/experience context for each volunteer
+      const scoredVolunteers = await Promise.all(activeVolunteers.map(async (vol) => {
+        // Fetch last 3 issues this volunteer handled to understand "Past Work"
+        const { data: pastAssignments } = await supabase
+          .from("issues")
+          .select("issue_summary, sector")
+          .eq("assigned_volunteer_id", vol.id)
+          .eq("status", "resolved")
+          .limit(3);
+          
+        const pastWorkHistory = (pastAssignments || [])
+          .map(a => `${a.issue_summary} (${a.sector})`)
+          .join(". ");
+
+        // Build a profile string for the volunteer including skills and past context
+        const volunteerProfileText = `Skills: ${(vol.skills || []).join(", ")}. Past Work: ${pastWorkHistory || "New volunteer"}`;
+        
+        let cosine = 0;
+        if (volunteerProfileText.trim() !== "") {
+          const volEmbedding = await generateLocalEmbedding(volunteerProfileText);
+          cosine = calculateCosineSimilarity(requiredEmbedding, volEmbedding);
         }
-
-        // Find backup volunteer (different from primary)
-        const backupVol = findBackupVolunteer(volunteer.id, matched[idx], state.volunteers, volunteerLoads);
-        const backupInfo = backupVol
-          ? ` | Backup: ${backupVol.name} (${backupVol.skills?.join(', ')})`
-          : ' | No backup available';
-
-        console.log('[Matching] Assigning issue', idx, 'to', volunteer.name);
-        matched[idx] = {
-          ...matched[idx],
-          assigned_volunteer_id: volunteer.id,
-          assignment_reason: `${item.assignment_reason || `Matched ${volunteer.name}`}${backupInfo}`,
-          status: 'assigned',
+        
+        const locScore = calculateLocationScore(issue.location || "", vol.zone || "");
+        
+        // Success rate: Use a real metric if available, otherwise default to high for new volunteers
+        const pastSuccessRate = vol.past_success_rate || 0.9; 
+        
+        // Calculate the Final Match Score (40% skills/history, 30% location, 30% success/load)
+        const finalScore = calculateFinalMatchScore(cosine, pastSuccessRate, locScore);
+        
+        return {
+          ...vol,
+          matchScore: finalScore,
+          cosinePercentage: Math.round(Math.max(0, cosine) * 100),
+          pastSuccessRate: Math.round(pastSuccessRate * 100)
         };
+      }));
 
-        volunteerLoads[volunteer.id] = (volunteerLoads[volunteer.id] || 0) + 1;
-        assignments.push({ issue_index: idx, volunteer_id: volunteer.id });
+      // D. Sort by match score and pick the best available
+      scoredVolunteers.sort((a, b) => b.matchScore - a.matchScore);
+      
+      // Filter by capacity (must be under limit)
+      const bestMatch = scoredVolunteers.find(v => (volunteerLoads[v.id] || 0) < (v.availability_hours_per_week || 10) * 0.8);
+
+      if (bestMatch) {
+         console.log(`[SmartMatch] Best fit for issue ${i}: ${bestMatch.name} (${bestMatch.matchScore}% match)`);
+         
+         // Find a secondary/backup (next best match)
+         const backupMatch = scoredVolunteers.find(v => v.id !== bestMatch.id);
+         const backupInfo = backupMatch 
+           ? ` | Backup: ${backupMatch.name} (${backupMatch.matchScore}% score)` 
+           : ' | No suitable backup';
+
+         matched[i] = {
+           ...matched[i],
+           assigned_volunteer_id: bestMatch.id,
+           status: 'assigned',
+           assignment_reason: `AI Smart Match (${bestMatch.matchScore}%). Skills: ${bestMatch.cosinePercentage}%, Loc: ${Math.round(calculateLocationScore(issue.location || "", bestMatch.zone || "") * 100)}%${backupInfo}`
+         };
+
+         volunteerLoads[bestMatch.id] = (volunteerLoads[bestMatch.id] || 0) + 1;
+         assignments.push({ issue_index: i, volunteer_id: bestMatch.id });
+      } else {
+        console.warn(`[SmartMatch] No suitable matches found for issue: ${issue.issue_summary?.substring(0, 30)}...`);
       }
-    } catch (err) {
-      console.error('[Matching] Gemini assignment failed:', err);
     }
-  } else {
-    console.log('[Matching] No Gemini key, skipping Gemini assignment');
+  } catch (error: any) {
+    console.error('[SmartMatch] Pipeline match failed:', error);
   }
-
-  // 2) Fallback matcher for remaining unassigned issues
-  console.log('[Matching] Starting fallback matcher. Unassigned:', matched.filter((i) => i.status !== 'assigned').length);
-  const sortedIssues = matched
-    .map((issue, idx) => ({ issue, idx }))
-    .sort((a, b) => (b.issue.priority_score || 0) - (a.issue.priority_score || 0));
-
-  for (const { issue, idx } of sortedIssues) {
-    if (issue.status === 'assigned') {
-      console.log('[Matching] Issue', idx, 'already assigned, skipping');
-      continue;
-    }
-
-    const requiredSkills: string[] = Array.isArray(issue.required_skills) && issue.required_skills.length > 0
-      ? issue.required_skills
-      : [normalizeSkillTag(issue.sector)].filter(Boolean);
-
-    const candidates = state.volunteers.filter((v) => {
-      if (!v.is_active) return false;
-      const volunteerSkills = (v.skills || []).map((s: string) => normalizeSkillTag(s));
-      const hasRequiredSkill = issue.sector === 'other' || requiredSkills.some((skill) => volunteerSkills.includes(skill));
-      const underCapacity = (volunteerLoads[v.id] || 0) < (v.availability_hours_per_week || 10) * 0.8;
-      return hasRequiredSkill && underCapacity;
-    });
-
-    if (candidates.length > 0) {
-      // Pick least-loaded
-      const best = candidates.reduce((prev, curr) =>
-        (volunteerLoads[prev.id] || 0) <= (volunteerLoads[curr.id] || 0) ? prev : curr
-      );
-
-      // Find backup volunteer (different from primary)
-      const backupVol = findBackupVolunteer(best.id, issue, state.volunteers, volunteerLoads);
-      const backupInfo = backupVol
-        ? ` | Backup: ${backupVol.name}`
-        : ' | No backup available';
-
-      console.log('[Matching] Assigning issue', idx, 'to', best.name, '(fallback)');
-      if (idx >= 0) {
-        matched[idx] = {
-          ...matched[idx],
-          assigned_volunteer_id: best.id,
-          assignment_reason: `Matched: ${best.name} (${issue.sector} skill, load: ${volunteerLoads[best.id]}/${best.availability_hours_per_week}hrs)${backupInfo}`,
-          status: 'assigned',
-        };
-      }
-
-      volunteerLoads[best.id] = (volunteerLoads[best.id] || 0) + 1;
-      assignments.push({ issue_index: idx, volunteer_id: best.id });
-    } else {
-      console.log('[Matching] No candidates for issue', idx, '(sector:', issue.sector, ')');
-    }
-  }
-
-  console.log('[Matching] Complete:', matched.filter((i) => i.status === 'assigned').length, '/', matched.length, 'assigned');
 
   return {
     state: {
@@ -1235,7 +1225,7 @@ const matchTool = async (state: AgentState): Promise<{ state: AgentState; confid
       issues: matched,
       assignments,
     },
-    confidence: assignments.length > 0 ? 0.9 : 0.4,
+    confidence: assignments.length > 0 ? 0.95 : 0.3,
   };
 };
 

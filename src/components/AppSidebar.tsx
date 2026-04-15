@@ -34,6 +34,7 @@ import {
   Building2,
   Handshake,
   Heart,
+  BrainCircuit,
 } from "lucide-react";
 
 const ngoNavItems = [
@@ -41,6 +42,7 @@ const ngoNavItems = [
   { labelKey: "About", url: "/about", icon: Building2 },
   { labelKey: "nav.sponsors", url: "/sponsors", icon: Handshake },
   { labelKey: "nav.runAgents", url: "/run", icon: Play, accent: true },
+  { labelKey: "RAG Insights", url: "/insights", icon: BrainCircuit, accent: true },
   { labelKey: "nav.manageFunds", url: "/manage-funds", icon: DollarSign },
   { labelKey: "nav.issues", url: "/issues", icon: ListChecks },
   { labelKey: "nav.volunteers", url: "/volunteers", icon: Users },

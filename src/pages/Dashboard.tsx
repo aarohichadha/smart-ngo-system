@@ -118,63 +118,63 @@ export default function Dashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-4 gap-4">
-        {statCards.map(({ label, value, icon: Icon, color }) => (
-          <Card key={label}>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label}</p>
-                  <p className={`text-3xl font-bold mt-1 ${color}`}>
-                    {loading ? "—" : value}
-                  </p>
+            {statCards.map(({ label, value, icon: Icon, color }) => (
+              <Card key={label}>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label}</p>
+                      <p className={`text-3xl font-bold mt-1 ${color}`}>
+                        {loading ? "—" : value}
+                      </p>
+                    </div>
+                    <Icon className={`w-8 h-8 ${color} opacity-20`} />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Sector bar chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t("dashboard.issuesBySector")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {localizedSectorData.length === 0 ? (
+                <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">
+                  {t("dashboard.noIssuesYet")}
                 </div>
-                <Icon className={`w-8 h-8 ${color} opacity-20`} />
-              </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={localizedSectorData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      dataKey="sector"
+                      tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                        fontSize: 12,
+                      }}
+                    />
+                    <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
-        ))}
-      </div>
-
-      {/* Sector bar chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t("dashboard.issuesBySector")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {localizedSectorData.length === 0 ? (
-            <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">
-              {t("dashboard.noIssuesYet")}
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={localizedSectorData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis
-                  dataKey="sector"
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "6px",
-                    fontSize: 12,
-                  }}
-                />
-                <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

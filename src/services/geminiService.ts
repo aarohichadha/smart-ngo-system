@@ -192,7 +192,7 @@ STRUCTURED FIELD REPORT:`;
   onProgress?.("Sending extracted text to Gemini for structuring...");
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     
     console.log("Gemini API Request:", {
       url: url.replace(GEMINI_API_KEY, "***REDACTED***"),
@@ -428,7 +428,7 @@ STRUCTURED FIELD REPORT:`;
   onProgress?.("Sending text to Gemini for structuring...");
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     
     console.log("Gemini API Request:", {
       url: url.replace(GEMINI_API_KEY, "***REDACTED***"),
@@ -489,3 +489,121 @@ STRUCTURED FIELD REPORT:`;
   }
 }
 
+/**
+ * Generate embedding for text using Gemini's text-embedding-004
+ */
+export async function generateEmbedding(text: string): Promise<number[]> {
+  if (!GEMINI_API_KEY) {
+    throw new Error("Gemini API key not configured.");
+  }
+  
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_API_KEY}`;
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "models/text-embedding-004",
+      content: { parts: [{ text }] },
+    })
+  });
+  
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error?.message || "Failed to generate embedding");
+  }
+  
+  const data = await response.json();
+  return data.embedding?.values || [];
+}
+
+/**
+ * Ask Gemini what skills are best for a given issue
+ */
+export async function analyzeSkillsForIssue(issueSummary: string, sector: string): Promise<string> {
+  if (!GEMINI_API_KEY) return "General Volunteer";
+  
+  const prompt = `Based on the following NGO issue, what are the top 3-5 specific skills a volunteer should possess to resolve this? Return ONLY the skills as a comma-separated list, nothing else.
+Issue: ${issueSummary}
+Sector: ${sector}
+Skills needed:`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 50 },
+    })
+  });
+  
+  if (!response.ok) return "General Support, Relief, Manual Labor";
+  
+  const data = await response.json();
+  return (data?.candidates?.[0]?.content?.parts?.[0]?.text || "General Support").trim();
+}
+
+/**
+ * Chat with reports (RAG query)
+ */
+export async function chatWithRAGContext(query: string, contextChunks: string[]): Promise<string> {
+  if (!GEMINI_API_KEY) throw new Error("Gemini API key not configured.");
+  
+  const prompt = `You are a helpful AI assistant analyzing NGO field reports. Use ONLY the provided context chunks to answer the user's query. If the answer is not contained in the context, say "I cannot find the answer in the provided reports."
+
+Context from Reports:
+${contextChunks.join("\n\n---\n\n")}
+
+User Query: ${query}
+Answer:`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2 },
+    })
+  });
+  
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err?.error?.message || "Failed to generate RAG response");
+  }
+  
+  const data = await response.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
+}
+
+
+/**
+ * Generate embedding using the local Python backend
+ */
+export async function generateLocalEmbedding(text: string): Promise<number[]> {
+  const endpoint = `${BACKEND_API_URL || ""}/api/embed`;
+  console.log(`[EmbeddingService] Attempting local embedding at: ${endpoint}`);
+  
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[EmbeddingService] Local embedding failed (Status: ${response.status}). Falling back to Gemini.`);
+      return generateEmbedding(text);
+    }
+
+    const data = await response.json();
+    console.log(`[EmbeddingService] Local embedding successful (Vector dim: ${data.embedding?.length})`);
+    return data.embedding || [];
+  } catch (error) {
+    console.error(`[EmbeddingService] Local embedding API error at ${endpoint}:`, error);
+    return generateEmbedding(text);
+  }
+}

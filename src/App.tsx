@@ -26,6 +26,7 @@ import ManageFunds from "./pages/ManageFunds";
 import AboutNgo from "./pages/AboutNgo";
 import Sponsors from "./pages/Sponsors";
 import SponsorPortal from "@/pages/SponsorPortal";
+import RagInsights from "./pages/RagInsights";
 
 const queryClient = new QueryClient();
 
@@ -60,6 +61,7 @@ const App = () => (
                   <Route path="/manage-funds" element={<ManageFunds />} />
                   <Route path="/saved" element={<Saved />} />
                   <Route path="/run" element={<RunAgents />} />
+                  <Route path="/insights" element={<RagInsights />} />
                   <Route path="/issues" element={<Issues />} />
                   <Route path="/volunteers" element={<Volunteers />} />
                   <Route path="/action-plan" element={<ActionPlan />} />
