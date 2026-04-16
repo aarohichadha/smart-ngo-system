@@ -77,7 +77,7 @@ interface KnowledgeBaseDocument {
   kind: "uploaded" | "synced";
 }
 
-const BACKEND_URL = import.meta.env.VITE_NODE_BACKEND_URL || "http://localhost:3000/api";
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_API_URL || "http://localhost:5000") + "/api";
 
 export function ReportChatbot() {
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
@@ -160,7 +160,7 @@ export function ReportChatbot() {
   };
 
   useEffect(() => {
-    // fetchSessions(); // BYPASSED FOR ONE-TIME SESSION
+    fetchSessions(); // ENABLED FOR HISTORY
     
     // Fetch initial context block count from persistent ChromaDB
     const checkStats = async () => {
@@ -183,19 +183,21 @@ export function ReportChatbot() {
 
   // When active session changes, load its messages
   useEffect(() => {
-    // if (activeSessionId) {
-    //   fetchMessages(activeSessionId);
-    // } else {
-    //   setMessages([{ role: "assistant", content: "Hello! Select a chat from the sidebar or start a new one." }]);
-    // }
-    if (messages.length === 0) {
-      setMessages([{ role: "assistant", content: "Hello! Upload your reports or sync your historical NGO data to begin asking questions." }]);
+    if (activeSessionId) {
+      // Only fetch if we don't already have messages (besides the greeting) 
+      // or if it's a forced change from history 
+      const isNewSessionJustCreated = messages.length === 2 && messages[0].role === 'assistant' && messages[1].role === 'user';
+      
+      if (!isNewSessionJustCreated) {
+        fetchMessages(activeSessionId);
+      }
+    } else {
+      setMessages([{ role: "assistant", content: "Hello! Select a chat from the sidebar or start a new one or just ask something below to start a new chat." }]);
     }
   }, [activeSessionId]);
 
   /* --- Supabase History Management --- */
   const fetchSessions = async () => {
-    /* BYPASSED FOR ONE-TIME SESSION
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data, error } = await supabase
@@ -205,11 +207,13 @@ export function ReportChatbot() {
       .order('created_at', { ascending: false });
       
     if (data) setSessions(data);
-    */
+    if (error) {
+      console.error("Error fetching sessions:", error);
+      toast.error("Failed to load chat history.");
+    }
   };
 
   const fetchMessages = async (sessionId: string) => {
-    /* BYPASSED FOR ONE-TIME SESSION
     const { data, error } = await supabase
       .from('rag_chat_messages')
       .select('*')
@@ -221,17 +225,15 @@ export function ReportChatbot() {
     } else {
       setMessages([{ role: "assistant", content: "Hello! How can I help you analyze your NGO data today?" }]);
     }
-    */
+    if (error) console.error("Error fetching messages:", error);
   };
 
   const createNewSession = async (firstQuery: string): Promise<string> => {
-    /* BYPASSED FOR ONE-TIME SESSION
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Not logged in");
     
     const title = firstQuery.split(' ').slice(0, 4).join(' ') + (firstQuery.split(' ').length > 4 ? '...' : '');
     
-    // We expect an error if the SQL wasn't run, so handle gracefully.
     const { data, error } = await supabase
       .from('rag_chat_sessions')
       .insert({ ngo_user_id: user.id, title })
@@ -243,28 +245,30 @@ export function ReportChatbot() {
         throw new Error("Unable to create session. Ensure you ran the SQL script.");
     }
     
-    setSessions([data, ...sessions]);
+    setSessions((prev) => [data, ...prev]);
     setActiveSessionId(data.id);
     return data.id;
-    */
-    return "local-session";
   };
 
   const saveMessageToSession = async (sessionId: string, role: string, content: string) => {
-    // BYPASSED FOR ONE-TIME SESSION
-    // await supabase.from('rag_chat_messages').insert({ session_id: sessionId, role, content });
+    const { error } = await supabase.from('rag_chat_messages').insert({ session_id: sessionId, role, content });
+    if (error) console.error("Error saving message:", error);
   };
 
   const deleteSession = async (e: React.MouseEvent, id: string) => {
-    /* BYPASSED FOR ONE-TIME SESSION
     e.stopPropagation();
     const { error } = await supabase.from('rag_chat_sessions').delete().eq('id', id);
     if (!error) {
-      setSessions(sessions.filter(s => s.id !== id));
-      if (activeSessionId === id) setActiveSessionId(null);
+      setSessions((prev) => prev.filter(s => s.id !== id));
+      if (activeSessionId === id) {
+        setActiveSessionId(null);
+        setMessages([{ role: "assistant", content: "Hello! Select a chat from the sidebar or start a new one." }]);
+      }
       toast.success("Chat deleted.");
+    } else {
+      console.error("Delete error:", error);
+      toast.error("Failed to delete chat.");
     }
-    */
   };
 
   /* --- RAG Backend Uploads & Chat --- */
@@ -370,11 +374,14 @@ export function ReportChatbot() {
       // Background save user query
       saveMessageToSession(currentSessionId, 'user', content);
 
-      // Hit Flask Backend
+      // Hit Flask Backend with History
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: content }),
+        body: JSON.stringify({ 
+          query: content,
+          history: messages.filter(m => m.content !== "Hello! Select a chat from the sidebar or start a new one or just ask something below to start a new chat.") 
+        }),
       });
 
       if (!res.ok) {

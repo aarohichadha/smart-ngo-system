@@ -293,6 +293,7 @@ def chat():
     """Process user queries against the vector db and generate LLM response."""
     data = request.json or {}
     query = data.get("query")
+    history = data.get("history") or []  # Expecting list of {role: "user"|"assistant", content: "..."}
     
     if not query:
         return jsonify({"error": "Query cannot be empty"}), 400
@@ -319,14 +320,26 @@ def chat():
     else:
         context_section = "No uploaded reports or historical data available."
         
+    # Format history for the prompt
+    history_section = ""
+    if history:
+        history_section = "Chat History (Current Session):\n"
+        for msg in history:
+            role_label = "User" if msg.get("role") == "user" else "Assistant"
+            history_section += f"{role_label}: {msg.get('content')}\n"
+        history_section += "\n---\n"
+
     prompt = f"""You are an expert AI assistant for NGO management and analysis. Your primary role is to help NGO workers understand their field reports and data.
 
 You have access to the following context from the organization's uploaded reports and database:
 
 {context_section}
 
+{history_section}
+
 Instructions:
 - If the user's question can be answered using the context above, prioritize that information.
+- Use the Chat History to maintain context of the current conversation.
 - If the context does not contain relevant information, use your own expert knowledge to answer helpfully.
 - Always be concise, actionable, and professional.
 - If asked about specific data points not in the context, let the user know and suggest they upload the relevant report.
@@ -480,7 +493,7 @@ IMPORTANT:
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(temperature=0.2)

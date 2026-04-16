@@ -1172,7 +1172,7 @@ const matchTool = async (state: AgentState): Promise<{ state: AgentState; confid
         }
         
         const locScore = calculateLocationScore(issue.location || "", vol.zone || "");
-        
+        2
         // Success rate: Use a real metric if available, otherwise default to high for new volunteers
         const pastSuccessRate = vol.past_success_rate || 0.9; 
         
