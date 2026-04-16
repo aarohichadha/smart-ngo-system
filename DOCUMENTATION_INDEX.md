@@ -217,7 +217,7 @@ QUICK_START.md (2 min)
 
 ### Path 3: Senior Developer
 1. [API_ARCHITECTURE.md](API_ARCHITECTURE.md) - Technical details
-2. Review code in `src/services/geminiService.ts`
+2. Review code in `frontend/src/services/geminiService.ts`
 3. [PROCESSING_FLOW.md](PROCESSING_FLOW.md) - Backend integration
 4. Plan backend migration
 

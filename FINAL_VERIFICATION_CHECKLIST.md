@@ -7,7 +7,7 @@ Use this checklist to confirm everything is working correctly.
 ## 🔍 Pre-Launch Verification
 
 ### Code Changes
-- [x] `src/services/geminiService.ts` modified
+- [x] `frontend/src/services/geminiService.ts` modified
   - [x] Added `extractTextFromFiles()`
   - [x] Added `structureTextWithGemini()`
   - [x] Added `processRawTextWithGemini()`
@@ -340,7 +340,7 @@ If any items are NOT checked:
    - `API_ARCHITECTURE.md` for technical details
 
 3. **Check the Code**
-   - `src/services/geminiService.ts`
+  - `frontend/src/services/geminiService.ts`
    - `src/pages/RunAgents.tsx`
 
 4. **Verify Configuration**

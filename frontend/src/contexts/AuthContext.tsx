@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { getFirebaseAuth } from "@/lib/firebase.js";
 
 export type UserType = "individual" | "ngo" | "sponsor";
 
@@ -32,6 +34,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string, userType: UserType, sponsorshipDomains?: string[]) => Promise<AuthResult>;
+  loginWithGoogle: (userType: UserType, sponsorshipDomains?: string[]) => Promise<AuthResult>;
   logout: () => Promise<void>;
   register: (input: RegisterInput) => Promise<AuthResult>;
 }
@@ -274,6 +277,64 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
   };
 
+  const loginWithGoogle = async (userType: UserType, sponsorshipDomains?: string[]): Promise<AuthResult> => {
+    try {
+      const auth = getFirebaseAuth();
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+
+      const googleResult = await signInWithPopup(auth, provider);
+      const googleCredential = GoogleAuthProvider.credentialFromResult(googleResult);
+      const idToken = googleCredential?.idToken;
+
+      if (!idToken) {
+        return { error: "Google sign-in did not return an ID token. Check Firebase Google provider setup." };
+      }
+
+      const { data, error } = await withTimeout(
+        supabase.auth.signInWithIdToken({
+          provider: "google",
+          token: idToken,
+        }),
+        AUTH_REQUEST_TIMEOUT_MS,
+        "signInWithIdToken",
+      );
+
+      if (error) return { error: error.message };
+
+      const authUser = data.user;
+      if (!authUser) return { error: "Unable to load account session." };
+
+      setUser(mapToAppUser(authUser, { user_type: userType }));
+
+      const fallbackName = googleResult.user.displayName || authUser.user_metadata?.full_name || null;
+
+      void Promise.allSettled([
+        upsertProfile(authUser, userType, {
+          full_name: fallbackName || undefined,
+          sponsorship_domains: userType === "sponsor" ? (sponsorshipDomains ?? []) : undefined,
+        }),
+        upsertRoleSpecificProfile(authUser, userType, {
+          full_name: fallbackName || undefined,
+        }),
+        trackAuthEvent("login", authUser.id, authUser.email ?? googleResult.user.email ?? ""),
+        withTimeout(getProfile(authUser.id), AUTH_INIT_TIMEOUT_MS, "getProfile")
+          .then((profile) => {
+            const finalProfile = profile || { user_type: userType, full_name: fallbackName };
+            setUser(mapToAppUser(authUser, finalProfile));
+          })
+          .catch(() => {
+            setUser(mapToAppUser(authUser, { user_type: userType, full_name: fallbackName }));
+          }),
+      ]);
+
+      return {};
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Google sign in failed. Please try again.";
+      return { error: message };
+    }
+  };
+
   const register = async (input: RegisterInput): Promise<AuthResult> => {
     const { email, password, userType, name, location, contactNumber, ngoType, sponsorshipDomains } = input;
     try {
@@ -338,6 +399,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         isLoading,
         isAuthenticated: !!user,
         login,
+        loginWithGoogle,
         logout,
         register,
       }}

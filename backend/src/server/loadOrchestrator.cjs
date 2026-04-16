@@ -3,7 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const ts = require("typescript");
 
-const SOURCE_PATH = path.resolve(__dirname, "..", "agents", "orchestrator.ts");
+const SOURCE_PATH = path.resolve(__dirname, "..", "..", "..", "frontend", "src", "agents", "orchestrator.ts");
 const CACHE_DIR = path.resolve(process.cwd(), ".cache");
 
 function ensureCacheDir() {

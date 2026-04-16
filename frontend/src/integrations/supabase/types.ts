@@ -39,6 +39,78 @@ export type Database = {
         }
         Relationships: []
       }
+      run_agent_reports: {
+        Row: {
+          id: string;
+          ngo_user_id: string;
+          title: string;
+          raw_input: string;
+          source_type: "manual" | "files";
+          source_files: Json;
+          processed_output: Json | null;
+          pipeline_result: Json | null;
+          created_at: string;
+        }
+        Insert: {
+          id?: string;
+          ngo_user_id: string;
+          title: string;
+          raw_input: string;
+          source_type: "manual" | "files";
+          source_files?: Json;
+          processed_output?: Json | null;
+          pipeline_result?: Json | null;
+          created_at?: string;
+        }
+        Update: {
+          id?: string;
+          ngo_user_id?: string;
+          title?: string;
+          raw_input?: string;
+          source_type?: "manual" | "files";
+          source_files?: Json;
+          processed_output?: Json | null;
+          pipeline_result?: Json | null;
+          created_at?: string;
+        }
+        Relationships: []
+      }
+      chatbot_synced_reports: {
+        Row: {
+          id: string;
+          ngo_user_id: string;
+          source_type: string;
+          report_title: string;
+          report_summary: string;
+          report_count: number;
+          knowledge_chunks: number;
+          report_data: Json;
+          created_at: string;
+        }
+        Insert: {
+          id?: string;
+          ngo_user_id: string;
+          source_type?: string;
+          report_title: string;
+          report_summary: string;
+          report_count?: number;
+          knowledge_chunks?: number;
+          report_data?: Json;
+          created_at?: string;
+        }
+        Update: {
+          id?: string;
+          ngo_user_id?: string;
+          source_type?: string;
+          report_title?: string;
+          report_summary?: string;
+          report_count?: number;
+          knowledge_chunks?: number;
+          report_data?: Json;
+          created_at?: string;
+        }
+        Relationships: []
+      }
       auth_events: {
         Row: {
           id: string;

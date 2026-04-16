@@ -35,6 +35,7 @@ import {
   Handshake,
   Heart,
   BrainCircuit,
+  Newspaper,
 } from "lucide-react";
 
 const ngoNavItems = [
@@ -47,9 +48,11 @@ const ngoNavItems = [
   { labelKey: "nav.issues", url: "/issues", icon: ListChecks },
   { labelKey: "nav.volunteers", url: "/volunteers", icon: Users },
   { labelKey: "nav.actionPlan", url: "/action-plan", icon: FileText },
-  { labelKey: "nav.agentLogs", url: "/logs", icon: Terminal },
+  // { labelKey: "nav.agentLogs", url: "/logs", icon: Terminal },
+  // Added to ngoNavItems array
+  {labelKey: "nav.newsPortal", url: "/news", icon: Newspaper, accent: true },
   { labelKey: "nav.community", url: "/community", icon: MessageSquare },
-  { labelKey: "nav.saved", url: "/saved", icon: Bookmark },
+  // { labelKey: "nav.saved", url: "/saved", icon: Bookmark },
 ];
 
 const volunteerNavItems = [

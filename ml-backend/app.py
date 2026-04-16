@@ -1,4 +1,6 @@
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
@@ -9,7 +11,8 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 # Load environment variables
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 app = Flask(__name__)
 # Enable CORS for the React frontend (usually runs on port 5173 or 5174)
@@ -82,6 +85,12 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
         start = end - overlap
     return chunks
 
+
+def build_sync_report_title(issue_count: int) -> str:
+    """Builds a human-readable title for a synced history snapshot."""
+    timestamp = datetime.now(timezone.utc).strftime("%b %d, %Y %H:%M UTC")
+    return f"Supabase history sync ({issue_count} reports) - {timestamp}"
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy"}), 200
@@ -94,6 +103,61 @@ def get_stats():
         return jsonify({"knowledgeBaseCount": count}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/documents', methods=['GET'])
+def list_documents():
+    """Lists knowledge-base documents grouped by source with chunk counts and previews."""
+    try:
+        total_docs = collection.count()
+        if total_docs == 0:
+            return jsonify({"documents": []}), 200
+
+        try:
+            requested_limit = int(request.args.get("limit", 500))
+        except (TypeError, ValueError):
+            requested_limit = 500
+
+        limit = max(1, min(requested_limit, 1000, total_docs))
+
+        raw = collection.get(
+            limit=limit,
+            include=["metadatas", "documents"]
+        )
+
+        metadatas = raw.get("metadatas") or []
+        documents = raw.get("documents") or []
+
+        grouped = {}
+        for metadata, doc_text in zip(metadatas, documents):
+            source = "unknown"
+            if isinstance(metadata, dict):
+                source = metadata.get("source") or "unknown"
+
+            if source not in grouped:
+                grouped[source] = {
+                    "source": source,
+                    "chunks": 0,
+                    "preview": "",
+                    "kind": "synced" if source == "supabase_history" else "uploaded",
+                }
+
+            grouped[source]["chunks"] += 1
+            if not grouped[source]["preview"] and isinstance(doc_text, str):
+                grouped[source]["preview"] = doc_text[:240]
+
+        documents_out = sorted(
+            grouped.values(),
+            key=lambda item: (item["kind"] != "uploaded", item["source"].lower())
+        )
+
+        return jsonify({
+            "documents": documents_out,
+            "scanned_chunks": limit,
+            "total_chunks": total_docs,
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to list documents: {str(e)}"}), 500
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -163,6 +227,25 @@ def sync_history():
         # Fetch Issues
         issues_res = supabase.table("issues").select("*").eq("ngo_user_id", user_id).execute()
         issues = issues_res.data or []
+
+        if not issues:
+            return jsonify({"message": "No historical issues found to sync."}), 200
+
+        snapshot_payload = {
+            "ngo_user_id": user_id,
+            "source_type": "supabase_history",
+            "report_title": build_sync_report_title(len(issues)),
+            "report_summary": f"Synced {len(issues)} issue records from Supabase into the chatbot knowledge base.",
+            "report_count": len(issues),
+            "knowledge_chunks": 0,
+            "report_data": issues,
+        }
+
+        try:
+            save_result = supabase.table("chatbot_synced_reports").insert(snapshot_payload).execute()
+            saved_rows = save_result.data or []
+        except Exception as e:
+            return jsonify({"error": f"Failed to save synced reports: {str(e)}"}), 500
         
         # Prepare text representation
         history_text = "Historical NGO Issues Log:\n\n"
@@ -174,9 +257,6 @@ def sync_history():
             history_text += f"  Urgency Score: {issue.get('urgency_score', 'N/A')}\n"
             history_text += f"  Date: {issue.get('created_at', 'N/A')}\n\n"
             
-        if not issues:
-            return jsonify({"message": "No historical issues found to sync."}), 200
-
         # Chunk and embed the database logs
         chunks = chunk_text(history_text, chunk_size=800, overlap=100)
         count = 0
@@ -195,8 +275,15 @@ def sync_history():
                     count += 1
         except Exception as e:
             return jsonify({"error": f"Gemini Embedding Error during Sync: {str(e)}"}), 500
+
+        if saved_rows:
+            try:
+                synced_report_id = saved_rows[0].get("id")
+                supabase.table("chatbot_synced_reports").update({"knowledge_chunks": count}).eq("id", synced_report_id).execute()
+            except Exception as e:
+                print(f"WARNING: Failed to update synced report chunk count: {e}")
                 
-        return jsonify({"success": True, "message": f"Synced {len(issues)} database records as {count} context chunks."}), 200
+        return jsonify({"success": True, "message": f"Synced {len(issues)} database records as {count} context chunks and saved a report snapshot."}), 200
 
     except Exception as e:
         return jsonify({"error": f"Failed to sync history: {str(e)}"}), 500

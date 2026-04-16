@@ -1,0 +1,11 @@
+{
+  "name": "smart-ngo-ml-backend",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "install:py": "python3 -m pip install --default-timeout=120 --no-cache-dir -r requirements.txt",
+    "dev": "python3 app.py",
+    "start": "python3 app.py"
+  },
+  "description": "Python ML backend runner scripts for Smart NGO System"
+}

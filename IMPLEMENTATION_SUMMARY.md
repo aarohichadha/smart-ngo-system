@@ -15,7 +15,7 @@ Separated text extraction (backend-capable feature) from Gemini API processing, 
 
 ## What Was Changed
 
-### 1. **`src/services/geminiService.ts`** - Enhanced with 3 new modular functions
+### 1. **`frontend/src/services/geminiService.ts`** - Enhanced with 3 new modular functions
 
 **New Functions Added:**
 
@@ -126,7 +126,7 @@ SAVE TO DATABASE
 
 ## Code Structure
 
-### Service Layer (`src/services/geminiService.ts`)
+### Service Layer (`frontend/src/services/geminiService.ts`)
 ```
 extractTextFromPDF()        ← PDF to text
 readFileAsText()           ← Universal file reader
@@ -259,7 +259,7 @@ See `TESTING_FLOW.md` for detailed test cases.
 ## Files Modified
 
 ### Core Application
-- ✏️ `src/services/geminiService.ts` - Enhanced with modular functions
+- ✏️ `frontend/src/services/geminiService.ts` - Enhanced with modular functions
 - ✏️ `src/pages/RunAgents.tsx` - Added new button and handler
 
 ### Documentation (New)

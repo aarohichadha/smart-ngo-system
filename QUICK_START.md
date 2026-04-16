@@ -44,7 +44,7 @@ Text Extraction (PDF.js) ↔ Text Processing (Gemini) ↔ Issue Matching (Agents
 ## Files You Need To Know About
 
 ### Code Changes
-- **`src/services/geminiService.ts`** - 3 new functions for modular processing
+- **`frontend/src/services/geminiService.ts`** - 3 new functions for modular processing
 - **`src/pages/RunAgents.tsx`** - New "Structure with Gemini" button
 
 ### Guides (Read If You Want Details)

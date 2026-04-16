@@ -51,7 +51,33 @@ interface SmartAnalysis {
   summary: string;
 }
 
-const BACKEND_URL = "http://localhost:5000/api";
+interface ChatbotSyncedReport {
+  id: string;
+  report_title: string;
+  report_summary: string;
+  report_count: number;
+  knowledge_chunks: number;
+  report_data: Array<{
+    id?: string;
+    issue_summary?: string | null;
+    sector?: string | null;
+    location?: string | null;
+    affected_count?: number | null;
+    urgency_score?: number | null;
+    status?: string | null;
+    created_at?: string | null;
+  }>;
+  created_at: string;
+}
+
+interface KnowledgeBaseDocument {
+  source: string;
+  chunks: number;
+  preview: string;
+  kind: "uploaded" | "synced";
+}
+
+const BACKEND_URL = import.meta.env.VITE_NODE_BACKEND_URL || "http://localhost:3000/api";
 
 export function ReportChatbot() {
   const [isProcessingFiles, setIsProcessingFiles] = useState(false);
@@ -62,6 +88,15 @@ export function ReportChatbot() {
   // Smart Analysis State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
+  const [isKnowledgeBaseOpen, setIsKnowledgeBaseOpen] = useState(false);
+  const [showSavedSyncReports, setShowSavedSyncReports] = useState(false);
+  const [isLoadingSavedSyncReports, setIsLoadingSavedSyncReports] = useState(false);
+  const [savedSyncReports, setSavedSyncReports] = useState<ChatbotSyncedReport[]>([]);
+  const [showUploadedReports, setShowUploadedReports] = useState(false);
+  const [uploadedReports, setUploadedReports] = useState<KnowledgeBaseDocument[]>([]);
+  const [isLoadingUploadedReports, setIsLoadingUploadedReports] = useState(false);
+  const [selectedSyncReport, setSelectedSyncReport] = useState<ChatbotSyncedReport | null>(null);
+  const [selectedUploadedReport, setSelectedUploadedReport] = useState<KnowledgeBaseDocument | null>(null);
   
   // Chat History State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -73,6 +108,56 @@ export function ReportChatbot() {
   const [knowledgeBaseCount, setKnowledgeBaseCount] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const loadSavedSyncReports = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("You must be logged in to view saved reports.");
+
+    setIsLoadingSavedSyncReports(true);
+    try {
+      const { data, error } = await supabase
+        .from("chatbot_synced_reports")
+        .select("*")
+        .eq("ngo_user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setSavedSyncReports((data || []) as ChatbotSyncedReport[]);
+    } finally {
+      setIsLoadingSavedSyncReports(false);
+    }
+  };
+
+  const loadUploadedReports = async () => {
+    setIsLoadingUploadedReports(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/documents`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to load uploaded reports.");
+      }
+
+      const data = await res.json();
+      const docs = Array.isArray(data.documents) ? data.documents : [];
+      const onlyUploaded = docs.filter((item: KnowledgeBaseDocument) => item.kind === "uploaded");
+      setUploadedReports(onlyUploaded);
+    } finally {
+      setIsLoadingUploadedReports(false);
+    }
+  };
+
+  const toggleSavedSyncReports = async () => {
+    const nextValue = !showSavedSyncReports;
+    setShowSavedSyncReports(nextValue);
+
+    if (nextValue && savedSyncReports.length === 0) {
+      try {
+        await loadSavedSyncReports();
+      } catch (error: any) {
+        toast.error(`Unable to load saved reports: ${error.message}`);
+      }
+    }
+  };
 
   useEffect(() => {
     // fetchSessions(); // BYPASSED FOR ONE-TIME SESSION
@@ -255,6 +340,7 @@ export function ReportChatbot() {
       }
 
       toast.success(data.message);
+      await loadSavedSyncReports();
     } catch (err: any) {
       toast.error(`History Sync Error: ${err.message}`);
     } finally {
@@ -391,7 +477,20 @@ export function ReportChatbot() {
 
         {/* Floating Database Sync Drawer Triggered by Modal */}
         <div className="p-4 border-t border-border bg-card">
-           <Dialog>
+           <Dialog
+             open={isKnowledgeBaseOpen}
+             onOpenChange={(open) => {
+               setIsKnowledgeBaseOpen(open);
+               if (open) {
+                 void loadSavedSyncReports().catch((error: any) => {
+                   toast.error(`Unable to load saved reports: ${error.message}`);
+                 });
+                void loadUploadedReports().catch((error: any) => {
+                  toast.error(`Unable to load uploaded reports: ${error.message}`);
+                });
+               }
+             }}
+           >
              <DialogTrigger asChild>
                 <Button variant="outline" className="w-full justify-start gap-2 h-10 border-primary/20 hover:bg-primary/5 text-primary">
                   <Database className="w-4 h-4" />
@@ -419,6 +518,129 @@ export function ReportChatbot() {
                       {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 text-blue-500" />}
                       {isSyncing ? "Fetching..." : "Fetch Latest NGO Reports from Supabase"}
                     </Button>
+                  </div>
+
+                  {/* Saved Syncs Card */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-medium">Saved Report Snapshots</h4>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-2"
+                        onClick={() => { void loadSavedSyncReports().catch((error: any) => toast.error(`Unable to load saved reports: ${error.message}`)); }}
+                        disabled={isLoadingSavedSyncReports}
+                      >
+                        {isLoadingSavedSyncReports ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <Button
+                      onClick={toggleSavedSyncReports}
+                      variant="outline"
+                      className="w-full justify-between gap-2 border border-border"
+                    >
+                      <span className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-emerald-500" />
+                        {showSavedSyncReports ? "Hide Saved Reports" : "View Saved Reports"}
+                      </span>
+                      <Badge variant="secondary">{savedSyncReports.length}</Badge>
+                    </Button>
+
+                    {showSavedSyncReports && (
+                      <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3 max-h-64 overflow-y-auto">
+                        {savedSyncReports.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-4">No saved sync snapshots yet.</p>
+                        ) : (
+                          savedSyncReports.map((report) => (
+                            <div key={report.id} className="rounded-md border border-border bg-background p-3 space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">{report.report_title}</p>
+                                  <p className="text-xs text-muted-foreground">{new Date(report.created_at).toLocaleString()}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline">{report.report_count} issues</Badge>
+                                  <Button size="sm" variant="outline" onClick={() => setSelectedSyncReport(report)}>
+                                    View
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-muted-foreground leading-relaxed">{report.report_summary}</p>
+                              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                <span className="px-2 py-1 rounded-full bg-muted">{report.knowledge_chunks} context chunks</span>
+                                <span className="px-2 py-1 rounded-full bg-muted">{report.report_data.length} saved entries</span>
+                              </div>
+                              <div className="space-y-1.5">
+                                {report.report_data.slice(0, 3).map((issue, issueIndex) => (
+                                  <div key={`${report.id}-${issueIndex}`} className="rounded-md bg-muted/40 px-2.5 py-2 text-xs">
+                                    <p className="font-medium text-foreground">{issue.issue_summary || "Untitled issue"}</p>
+                                    <p className="text-muted-foreground">
+                                      {issue.sector || "Unknown sector"}
+                                      {issue.location ? ` • ${issue.location}` : ""}
+                                      {typeof issue.urgency_score === "number" ? ` • Urgency ${issue.urgency_score}/10` : ""}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Uploaded Reports Card */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-medium">Uploaded Reports</h4>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-2"
+                        onClick={() => { void loadUploadedReports().catch((error: any) => toast.error(`Unable to load uploaded reports: ${error.message}`)); }}
+                        disabled={isLoadingUploadedReports}
+                      >
+                        {isLoadingUploadedReports ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Refresh
+                      </Button>
+                    </div>
+
+                    <Button
+                      onClick={() => setShowUploadedReports((prev) => !prev)}
+                      variant="outline"
+                      className="w-full justify-between gap-2 border border-border"
+                    >
+                      <span className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-blue-500" />
+                        {showUploadedReports ? "Hide Uploaded Reports" : "View Uploaded Reports"}
+                      </span>
+                      <Badge variant="secondary">{uploadedReports.length}</Badge>
+                    </Button>
+
+                    {showUploadedReports && (
+                      <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3 max-h-64 overflow-y-auto">
+                        {uploadedReports.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-4">No uploaded reports found in knowledge base yet.</p>
+                        ) : (
+                          uploadedReports.map((doc) => (
+                            <div key={doc.source} className="rounded-md border border-border bg-background p-3 space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">{doc.source}</p>
+                                  <p className="text-xs text-muted-foreground">{doc.chunks} chunk(s) in knowledge base</p>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={() => setSelectedUploadedReport(doc)}>
+                                  View
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground leading-relaxed">{doc.preview || "No preview available."}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                   
                   {/* Upload Card */}
@@ -463,6 +685,52 @@ export function ReportChatbot() {
                     </Button>
                   </div>
                 </div>
+             </DialogContent>
+           </Dialog>
+
+           <Dialog open={selectedSyncReport !== null} onOpenChange={(open) => !open && setSelectedSyncReport(null)}>
+             <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+               <DialogHeader>
+                 <DialogTitle>{selectedSyncReport?.report_title || "Saved Snapshot"}</DialogTitle>
+                 <DialogDescription>{selectedSyncReport?.report_summary || ""}</DialogDescription>
+               </DialogHeader>
+               {selectedSyncReport && (
+                 <div className="space-y-3">
+                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                     <Badge variant="outline">{selectedSyncReport.report_count} issues</Badge>
+                     <Badge variant="outline">{selectedSyncReport.knowledge_chunks} chunks</Badge>
+                     <span>{new Date(selectedSyncReport.created_at).toLocaleString()}</span>
+                   </div>
+                   <div className="space-y-2">
+                     {selectedSyncReport.report_data.map((issue, idx) => (
+                       <div key={`${selectedSyncReport.id}-${idx}`} className="rounded-md border border-border bg-muted/20 p-3 text-sm">
+                         <p className="font-medium text-foreground">{issue.issue_summary || "Untitled issue"}</p>
+                         <p className="text-xs text-muted-foreground">
+                           {issue.sector || "Unknown sector"}
+                           {issue.location ? ` • ${issue.location}` : ""}
+                           {typeof issue.urgency_score === "number" ? ` • Urgency ${issue.urgency_score}/10` : ""}
+                         </p>
+                       </div>
+                     ))}
+                   </div>
+                 </div>
+               )}
+             </DialogContent>
+           </Dialog>
+
+           <Dialog open={selectedUploadedReport !== null} onOpenChange={(open) => !open && setSelectedUploadedReport(null)}>
+             <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+               <DialogHeader>
+                 <DialogTitle>{selectedUploadedReport?.source || "Uploaded Report"}</DialogTitle>
+                 <DialogDescription>
+                   {selectedUploadedReport ? `${selectedUploadedReport.chunks} chunk(s) currently stored in knowledge base.` : ""}
+                 </DialogDescription>
+               </DialogHeader>
+               {selectedUploadedReport && (
+                 <pre className="whitespace-pre-wrap rounded-lg border border-border bg-muted/20 p-3 text-xs leading-relaxed">
+                   {selectedUploadedReport.preview || "No preview available."}
+                 </pre>
+               )}
              </DialogContent>
            </Dialog>
         </div>

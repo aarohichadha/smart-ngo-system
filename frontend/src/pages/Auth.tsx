@@ -9,7 +9,9 @@ import RegisterForm from "@/components/auth/RegisterForm";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { Building2, Heart, Users } from "lucide-react";
+import { Building2, Chrome, Heart, Loader2, Users } from "lucide-react";
+import { toast } from "sonner";
+import { isFirebaseConfigured } from "@/lib/firebase.js";
 
 const roleOptions = [
   { value: "individual", labelKey: "auth.individual", icon: Users },
@@ -33,10 +35,11 @@ export default function Auth() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, loginWithGoogle } = useAuth();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<"login" | "register">("login");
   const [userType, setUserType] = useState<"individual" | "ngo" | "sponsor">("individual");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const effectiveRole = user?.userType ?? userType;
   const requestedRoute = (location.state as { from?: string } | null)?.from;
   const defaultRoute = getDefaultRouteByRole(effectiveRole);
@@ -50,6 +53,27 @@ export default function Auth() {
 
   const handleRegisterSuccess = () => {
     setActiveTab("login");
+  };
+
+  const handleGoogleLogin = async () => {
+    if (!isFirebaseConfigured()) {
+      toast.error("Google login is not configured yet. Add Firebase env keys first.");
+      return;
+    }
+
+    try {
+      setIsGoogleLoading(true);
+      const result = await loginWithGoogle(userType);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("Signed in with Google");
+      handleLoginSuccess();
+    } finally {
+      setIsGoogleLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -121,6 +145,27 @@ export default function Auth() {
                     })}
                   </div>
                 </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={handleGoogleLogin}
+                  disabled={isGoogleLoading}
+                >
+                  {isGoogleLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />}
+                  Continue with Google
+                </Button>
+
+                <div className="relative py-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">or</span>
+                  </div>
+                </div>
+
                 <LoginForm userType={userType} onSuccess={handleLoginSuccess} />
               </TabsContent>
 

@@ -6,19 +6,12 @@
     "noUnusedParameters": false,
     "paths": {
       "@/*": [
-        "./src/*"
+        "./frontend/src/*"
       ]
     },
     "skipLibCheck": true,
+    "noEmit": true,
     "strictNullChecks": false
   },
-  "files": [],
-  "references": [
-    {
-      "path": "./tsconfig.app.json"
-    },
-    {
-      "path": "./tsconfig.node.json"
-    }
-  ]
+  "include": ["frontend/src", "backend/src"]
 }

@@ -87,7 +87,7 @@ Save to Database
 ## File Structure
 
 ### Services
-- **`src/services/geminiService.ts`** - Core text processing logic
+- **`frontend/src/services/geminiService.ts`** - Core text processing logic
   - `extractTextFromPDF()` - PDF to text conversion
   - `readFileAsText()` - Universal file reader
   - `extractTextFromFiles()` - Batch file extraction

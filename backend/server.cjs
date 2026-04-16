@@ -1,9 +1,8 @@
-require("dotenv").config();
-
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 const { createClient } = require("@supabase/supabase-js");
 const {
   normalizePhoneNumber,
@@ -14,6 +13,29 @@ const {
 
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = new Set([
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+  ]);
+
+  if (!origin || allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  return next();
+});
 
 const PORT = Number(process.env.PORT || 3000);
 const INTERNAL_API_BASE_URL =
@@ -25,14 +47,17 @@ const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SERP_API_KEY = process.env.SERP_API_KEY;
 
-if (
-  !ACCESS_TOKEN ||
-  !WHATSAPP_PHONE_NUMBER_ID ||
-  !SUPABASE_URL ||
-  !SUPABASE_SERVICE_ROLE_KEY
-) {
-  console.error("Missing required env variables.");
+const missingEnv = [
+  !ACCESS_TOKEN && "WHATSAPP_ACCESS_TOKEN",
+  !WHATSAPP_PHONE_NUMBER_ID && "WHATSAPP_PHONE_NUMBER_ID",
+  !SUPABASE_URL && "VITE_SUPABASE_URL",
+  !SUPABASE_SERVICE_ROLE_KEY && "SUPABASE_SERVICE_ROLE_KEY",
+].filter(Boolean);
+
+if (missingEnv.length > 0) {
+  console.error("Missing required env variables:", missingEnv.join(", "));
   process.exit(1);
 }
 
@@ -961,6 +986,114 @@ async function handleTextMessage(message) {
 
   await handleTextReportMessage(message);
 }
+
+// backend/server.cjs
+app.post('/api/serp-news', async (req, res) => {
+  try {
+    const { query, filters = {} } = req.body || {};
+
+    if (!query || !String(query).trim()) {
+      return res.status(400).json({ error: 'Query is required.' });
+    }
+
+    if (!SERP_API_KEY) {
+      return res.status(500).json({ error: 'SERP_API_KEY is not configured.' });
+    }
+
+    const country = typeof filters.country === 'string' ? filters.country.trim() : '';
+    const language = typeof filters.language === 'string' && filters.language.trim() ? filters.language.trim() : 'en';
+    const normalizedCountry = country.toLowerCase();
+    const countryCodeMap = {
+      india: 'in',
+      'united states': 'us',
+      usa: 'us',
+      us: 'us',
+      uk: 'gb',
+      'united kingdom': 'gb',
+      canada: 'ca',
+      australia: 'au',
+    };
+
+    const serpParams = new URLSearchParams({
+      engine: 'google',
+      tbm: 'nws',
+      q: String(query).trim(),
+      api_key: SERP_API_KEY,
+      hl: language,
+      num: '10',
+    });
+
+    const countryCode = countryCodeMap[normalizedCountry];
+    if (countryCode) {
+      serpParams.set('gl', countryCode);
+    }
+
+    if (country) {
+      serpParams.set('location', country);
+    }
+
+    const serpResponse = await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
+    const serpData = await serpResponse.json();
+
+    if (!serpResponse.ok || serpData.error) {
+      return res.status(502).json({
+        error: serpData.error || 'Failed to fetch SERP news results.',
+      });
+    }
+
+    const sourceResults = Array.isArray(serpData.news_results) && serpData.news_results.length > 0
+      ? serpData.news_results
+      : Array.isArray(serpData.organic_results)
+        ? serpData.organic_results
+        : [];
+
+    const inferSeverity = (text) => {
+      const value = String(text || '').toLowerCase();
+      if (/(critical|urgent|severe|deadly|emergency|evacuat|outbreak)/.test(value)) {
+        return 'high';
+      }
+      if (/(warn|risk|concern|impact|spread|damage)/.test(value)) {
+        return 'medium';
+      }
+      return 'low';
+    };
+
+    const inferIssueType = (text) => {
+      const value = String(text || '').toLowerCase();
+      if (/(water|sanitation|drought|flood|rain|storm)/.test(value)) return 'water_sanitation';
+      if (/(health|hospital|disease|medical|clinic|outbreak)/.test(value)) return 'health';
+      if (/(school|education|student|teacher)/.test(value)) return 'education';
+      if (/(food|hunger|nutrition|ration)/.test(value)) return 'food_security';
+      if (/(job|employment|livelihood|income)/.test(value)) return 'livelihood';
+      return 'news';
+    };
+
+    const structuredIssues = sourceResults.slice(0, 10).map((item, index) => {
+      const title = item.title || item.snippet || `News item ${index + 1}`;
+      const snippet = item.snippet || '';
+      const sourceName = item.source || item.displayed_source || '';
+
+      return {
+        issue_title: title,
+        issue_type: inferIssueType(`${title} ${snippet}`),
+        affected_population: 0,
+        location: country || item.location || sourceName || 'Unknown',
+        severity: inferSeverity(`${title} ${snippet}`),
+        source_url: item.link || item.redirect_link || '',
+        source_name: sourceName,
+        published_at: item.date || null,
+        snippet,
+      };
+    });
+
+    return res.json(structuredIssues);
+  } catch (error) {
+    console.error('SERP news route failed:', error.response?.data || error.message || error);
+    return res.status(500).json({
+      error: 'SERP news route failed.',
+    });
+  }
+});
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];

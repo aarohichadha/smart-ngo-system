@@ -6,7 +6,7 @@ I've restructured your report processing system from a single monolithic approac
 
 ### 🔧 Code Changes
 
-**1. Enhanced `src/services/geminiService.ts`** with 3 new functions:
+**1. Enhanced `frontend/src/services/geminiService.ts`** with 3 new functions:
 
 - **`extractTextFromFiles()`** - Extracts text from multiple files (PDF, TXT, CSV, JSON)
   - Handles PDF parsing with PDF.js
@@ -160,7 +160,7 @@ See `PROCESSING_FLOW.md` for step-by-step guide.
 ## File Status
 
 ### Modified Files
-- ✏️ `src/services/geminiService.ts` (enhanced with new functions)
+- ✏️ `frontend/src/services/geminiService.ts` (enhanced with new functions)
 - ✏️ `src/pages/RunAgents.tsx` (added new button and handler)
 
 ### New Documentation

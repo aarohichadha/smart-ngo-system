@@ -1,8 +1,8 @@
 import { toast } from "sonner";
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Use backend for API calls - fallback to frontend API key if needed
-const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || "";
+// Use the dedicated ML backend for local embeddings and file extraction.
+const ML_BACKEND_URL = import.meta.env.VITE_ML_BACKEND_URL || "";
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1/models";
 
@@ -102,13 +102,13 @@ export async function extractTextFromFiles(
       let content = "";
 
       // Backend-first extraction (if configured), then local fallback.
-      if (BACKEND_API_URL) {
+      if (ML_BACKEND_URL) {
         try {
           onProgress?.(`Calling backend extractor for: ${file.name}`);
           const formData = new FormData();
           formData.append("file", file);
 
-          const response = await fetch(`${BACKEND_API_URL}/extract-text`, {
+          const response = await fetch(`${ML_BACKEND_URL}/extract-text`, {
             method: "POST",
             body: formData,
           });
@@ -584,7 +584,7 @@ Answer:`;
  * Generate embedding using the local Python backend
  */
 export async function generateLocalEmbedding(text: string): Promise<number[]> {
-  const endpoint = `${BACKEND_API_URL || ""}/api/embed`;
+  const endpoint = `${ML_BACKEND_URL || ""}/api/embed`;
   console.log(`[EmbeddingService] Attempting local embedding at: ${endpoint}`);
   
   try {

@@ -31,26 +31,26 @@ VITE_SUPABASE_PROJECT_ID="<your-project-id>"
 ## Install
 
 ```bash
-npm install
+npm run install:all
 ```
 
 ## Run Locally
 
 ```bash
-npm run dev
+npm run dev:frontend
 ```
 
 The app runs on `http://localhost:8080`.
 
 ## Available Scripts
 
-- `npm run dev` - Start dev server
-- `npm run build` - Production build
-- `npm run build:dev` - Development-mode build
-- `npm run preview` - Preview built app
-- `npm run lint` - Run ESLint
-- `npm run test` - Run Vitest once
-- `npm run test:watch` - Run Vitest in watch mode
+- `npm run install:all` - Install frontend + backend dependencies
+- `npm run dev:frontend` - Start frontend dev server
+- `npm run build:frontend` - Build frontend for production
+- `npm run test:frontend` - Run frontend tests
+- `npm run dev:backend` - Start Node backend server
+- `npm run start:backend` - Start backend in normal mode
+- `npm run dev:ml` - Start Python ML backend
 
 ## Project Routes
 
@@ -76,7 +76,7 @@ Make sure these tables (and referenced columns) exist before running the app in 
 For auth setup SQL (profiles + login/signup event logging + RLS), run:
 
 ```bash
-supabase/sql/auth_setup.sql
+backend/supabase/sql/auth_setup.sql
 ```
 
 ## Testing
@@ -84,27 +84,27 @@ supabase/sql/auth_setup.sql
 Unit tests:
 
 ```bash
-npm run test
+npm run test:frontend
 ```
 
 E2E tests (Playwright config present):
 
 ```bash
-npx playwright test
+npx playwright test --config frontend/playwright.config.ts
 ```
 
 ## Project Structure
 
 ```text
-src/
-  agents/         # Agent orchestration logic
-  components/     # Layout and UI components
-  integrations/   # External service clients (Supabase)
-  pages/          # Route-level screens
-  test/           # Vitest setup and example tests
+frontend/
+  src/            # React app source, UI, pages, services
+backend/
+  src/server/     # Node backend helpers and WhatsApp pipeline
+  supabase/       # Supabase edge functions, SQL, and migrations
+ml-backend/      # Python Flask ML/RAG backend
 ```
 
 ## Notes
 
-- Agent pipeline in `src/agents/orchestrator.ts` is scaffolded with stubs and ready for implementation.
+- Agent pipeline in `frontend/src/agents/orchestrator.ts` is scaffolded with stubs and ready for implementation.
 - Dashboard and pages already include demo-data actions to help bootstrap local testing.
