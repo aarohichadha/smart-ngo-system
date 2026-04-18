@@ -9,6 +9,7 @@
     "pipeline-logs": "node ./scripts/pipeline-log-server.mjs"
   },
   "dependencies": {
+    "@google-cloud/vertexai": "^1.12.0",
     "@supabase/supabase-js": "^2.103.0",
     "axios": "^1.15.0",
     "dotenv": "^17.4.2",
