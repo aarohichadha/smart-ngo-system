@@ -497,7 +497,7 @@ app.post("/api/whatsapp/assign-volunteers", async (req, res) => {
 });
 
 app.post("/api/run-vertex-agent", async (req, res) => {
-  const { rawInput, volunteers } = req.body;
+  const { rawInput, volunteers, ngo_user_id } = req.body;
   
   if (!rawInput) {
     return res.status(400).json({ error: "rawInput is required" });
@@ -505,7 +505,7 @@ app.post("/api/run-vertex-agent", async (req, res) => {
 
   try {
     console.log("[API] /api/run-vertex-agent called");
-    const state = await runVertexAgent(rawInput, volunteers || []);
+    const state = await runVertexAgent(rawInput, volunteers || [], ngo_user_id, supabase);
     return res.json(state);
   } catch (error) {
     console.error("[API] Vertex Agent error:", error);

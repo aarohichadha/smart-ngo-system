@@ -56,11 +56,14 @@ export const runOrchestrator = async (
   onStepComplete?.(initialState);
 
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    const ngo_user_id = user?.id;
+
     const backendUrl = "http://localhost:3000"; // Our Node.js backend
     const response = await fetch(`${backendUrl}/api/run-vertex-agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rawInput, volunteers }),
+      body: JSON.stringify({ rawInput, volunteers, ngo_user_id }),
     });
 
     if (!response.ok) {

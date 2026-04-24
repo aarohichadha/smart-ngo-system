@@ -10,9 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MapPin, Users } from "lucide-react";
+import { MapPin, Users, PlusCircle } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { formatDateTime, translateSector, translateStatus } from "@/lib/i18n";
+import { AlertTriangle, Lightbulb, ChevronDown, ChevronUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 interface Issue {
   id: string;
@@ -30,6 +33,19 @@ interface Issue {
 interface Volunteer {
   id: string;
   name: string;
+}
+
+interface Prediction {
+  id?: string;
+  title: string;
+  description: string;
+  sector: string;
+  urgency: "critical" | "high" | "medium" | "low";
+  confidence?: "high" | "medium" | "low";
+  timeframe?: string;
+  resolution?: string;
+  resource_allocation?: Array<{ item: string; quantity: number | string; priority: string; reason?: string }>;
+  overall_risk_assessment?: string;
 }
 
 const DEMO_ISSUES: Issue[] = [
@@ -122,6 +138,8 @@ export default function Issues() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("priority");
   const [loading, setLoading] = useState(true);
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [showPredictions, setShowPredictions] = useState(true);
   const { language, t } = useLanguage();
 
   useEffect(() => {
@@ -139,18 +157,30 @@ export default function Issues() {
         return;
       }
 
-      const [issuesRes, volRes] = await Promise.all([
+      const [issuesRes, volRes, predsRes] = await Promise.all([
         supabase
           .from("issues")
           .select("*")
           .eq("ngo_user_id", user.id)
           .neq("status", "resolved"),
         supabase.from("volunteers").select("*").eq("ngo_user_id", user.id),
+        supabase.from("smart_predictions")
+          .select("*")
+          .eq("ngo_user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(10) // fetch up to 10 latest predictions
       ]);
 
       const dbIssues = (issuesRes.data || []) as Issue[];
       setIssues(dbIssues.length > 0 ? dbIssues : []);
       setVolunteers((volRes.data || []) as Volunteer[]);
+      
+      if (predsRes.data && predsRes.data.length > 0) {
+        setPredictions(predsRes.data as Prediction[]);
+      } else {
+        setPredictions([]);
+      }
+      
       setLoading(false);
     };
     fetchData();
@@ -160,13 +190,55 @@ export default function Issues() {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const [issuesRes, volRes] = await Promise.all([
+    const [issuesRes, volRes, predsRes] = await Promise.all([
       supabase.from("issues").select("*").eq("ngo_user_id", user.id).neq("status", "resolved"),
       supabase.from("volunteers").select("*").eq("ngo_user_id", user.id),
+      supabase.from("smart_predictions").select("*").eq("ngo_user_id", user.id).order("created_at", { ascending: false }).limit(10)
     ]);
     setIssues((issuesRes.data || []) as Issue[]);
     setVolunteers((volRes.data || []) as Volunteer[]);
+    
+    if (predsRes.data && predsRes.data.length > 0) {
+      setPredictions(predsRes.data as Prediction[]);
+    } else {
+      setPredictions([]);
+    }
+    
     setLoading(false);
+  };
+
+  const postCommunityRequest = async (pred: Prediction) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+       toast.error("Please log in to post requests.");
+       return;
+    }
+    
+    let supplies = "";
+    if (pred.resource_allocation && pred.resource_allocation.length > 0) {
+       supplies = pred.resource_allocation.map(a => `${a.quantity}x ${a.item}`).join(", ");
+    }
+    
+    const req_payload = {
+        owner_id: user.id,
+        title: `Need volunteers/supplies for: ${pred.title}`,
+        description: `AI Prediction Request: ${pred.description}\n\nResolution: ${pred.resolution || 'N/A'}\n\nSupplies needed: ${supplies || 'None specified'}`,
+        category: pred.sector || "General",
+        urgency: pred.urgency === "critical" ? "critical" : (pred.urgency === "high" ? "high" : "medium"),
+        location: "AI Identified Need Area", 
+        volunteers_needed: 1, 
+        funding_amount: 0,
+        skills_needed: [pred.sector || "General"],
+        contact_method: "Platform Messaging"
+    };
+    
+    try {
+        const { error } = await supabase.from("ngo_requests").insert(req_payload);
+        if (error) throw error;
+        toast.success("Community request posted successfully for this prediction!");
+    } catch (err: any) {
+        toast.error(`Failed to post request: ${err.message}`);
+    }
   };
 
   const sectors = [...new Set(issues.map((i) => i.sector).filter(Boolean))] as string[];
@@ -223,6 +295,83 @@ export default function Issues() {
           </SelectContent>
         </Select>
       </div>
+
+      {/* AI Predictive Intelligence Alerts */}
+      {predictions.length > 0 && (
+        <div className="mb-6 space-y-3">
+          <div 
+            className="flex items-center justify-between cursor-pointer group"
+            onClick={() => setShowPredictions(!showPredictions)}
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
+              <h2 className="text-lg font-bold text-foreground group-hover:text-amber-700 transition-colors">AI Predictive Intelligence</h2>
+              <Badge variant="outline" className="border-amber-200 text-amber-700 bg-amber-50">Early Warnings</Badge>
+            </div>
+            <button className="p-1 hover:bg-muted rounded-md transition-colors">
+              {showPredictions ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
+            </button>
+          </div>
+          
+          {showPredictions && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {predictions.map((pred, i) => (
+                <div key={i} className="bg-amber-50/50 border border-amber-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-amber-500 rounded-l-xl"></div>
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="font-semibold text-amber-950 text-sm leading-snug pr-4">{pred.title}</h3>
+                    <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-none shrink-0 capitalize">{pred.urgency}</Badge>
+                  </div>
+                  <p className="text-sm text-amber-900/80 mb-3 leading-relaxed">{pred.description}</p>
+                  
+                  {pred.resolution && (
+                    <div className="bg-amber-100/50 rounded-lg p-3 border border-amber-200/50">
+                      <h4 className="flex items-center gap-1.5 text-xs font-bold text-amber-800 mb-1">
+                        <Lightbulb className="w-3.5 h-3.5" /> Mitigation Resolution
+                      </h4>
+                      <p className="text-xs text-amber-900 leading-relaxed font-medium">{pred.resolution}</p>
+                    </div>
+                  )}
+                  
+                  {pred.overall_risk_assessment && (
+                    <div className="bg-rose-50 rounded-lg p-3 border border-rose-200 mt-3">
+                      <h4 className="flex items-center gap-1.5 text-xs font-bold text-rose-800 mb-1">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Risk Assessment
+                      </h4>
+                      <p className="text-xs text-rose-900 leading-relaxed font-medium">{pred.overall_risk_assessment}</p>
+                    </div>
+                  )}
+                  
+                  {pred.resource_allocation && pred.resource_allocation.length > 0 && (
+                    <div className="mt-3">
+                      <h4 className="text-xs font-bold text-foreground mb-1">Suggested Resource Allocation:</h4>
+                      <ul className="space-y-1">
+                        {pred.resource_allocation.map((alloc, idx) => (
+                          <li key={idx} className="text-xs text-muted-foreground bg-muted/30 p-1.5 rounded-md flex justify-between">
+                            <span className="font-semibold">{alloc.item}</span>
+                            <span className="opacity-80">Qty: {alloc.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  
+                  <div className="mt-3 pt-3 border-t border-amber-200/50">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full gap-2 border-amber-300 hover:bg-amber-100/50 text-amber-800 bg-amber-50"
+                      onClick={() => postCommunityRequest(pred)}
+                    >
+                      <PlusCircle className="w-4 h-4" /> Request Volunteers / Supplies for Setup
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Grid */}
       {loading ? (

@@ -173,7 +173,7 @@ function calculateFinalMatchScoreEnhanced(cosineSimilarity, skillOverlap, pastSu
 /**
  * Tool logic for match_volunteers — cosine similarity + partial skill overlap pipeline
  */
-async function matchVolunteersLogic(issues, volunteers) {
+async function matchVolunteersLogic(issues, volunteers, ngo_user_id, supabase) {
   console.log("[VertexAgent] Tool: match_volunteers (cosine + overlap)", { issueCount: issues?.length, volunteerCount: volunteers?.length });
 
   const matched = issues.map(i => ({ ...i }));
@@ -252,6 +252,28 @@ async function matchVolunteersLogic(issues, volunteers) {
       });
     } else {
       console.warn(`[SmartMatch] No suitable volunteer for issue ${i}`);
+      
+      // Gap identified: create a community post
+      if (supabase && ngo_user_id) {
+          const req_payload = {
+              "owner_id": ngo_user_id,
+              "title": issue.issue_summary || "Help Needed",
+              "description": `Automated Request: We urgently need volunteers for an ongoing crisis matching this criteria.\\nReason: No available volunteers in the system have the required capacity or skills.\\nLocation: ${issue.location || 'N/A'}`,
+              "category": issue.sector || "General",
+              "urgency": issue.priority_score >= 8 ? "critical" : (issue.priority_score >= 6 ? "high" : "medium"),
+              "location": issue.location || "N/A",
+              "volunteers_needed": 1,
+              "funding_amount": 0,
+              "skills_needed": [issue.sector || "General"],
+              "contact_method": "Platform Messaging"
+          };
+          try {
+              await supabase.table("ngo_requests").insert(req_payload);
+              console.log("[SmartMatch] Automated community post created for missing volunteer gap.");
+          } catch (e) {
+              console.error("[SmartMatch] Failed to post automated request:", e.message);
+          }
+      }
     }
   }
 
@@ -343,7 +365,7 @@ const agentTools = [
 /**
  * Core ReAct Loop Execution
  */
-async function runVertexAgent(rawInput, volunteers) {
+async function runVertexAgent(rawInput, volunteers, ngo_user_id, supabase) {
   console.log("[VertexAgent] Starting pipeline for input length:", rawInput?.length);
   
   const model = vertexAI.getGenerativeModel({
@@ -473,11 +495,11 @@ You MUST execute the 4-step tool sequence. Once you have the results from 'match
           const volunteersToUse = (Array.isArray(state.volunteers) && state.volunteers.length > 0)
             ? state.volunteers
             : (Array.isArray(args.active_volunteers) && args.active_volunteers.length > 0)
-              ? args.active_volunteers
-              : volunteers;
+               ? args.active_volunteers
+               : volunteers;
 
           console.log(`[VertexAgent] match_volunteers: ${issuesToMatch.length} issues, ${volunteersToUse.length} volunteers`);
-          const { assignments, matched_issues } = await matchVolunteersLogic(issuesToMatch, volunteersToUse);
+          const { assignments, matched_issues } = await matchVolunteersLogic(issuesToMatch, volunteersToUse, ngo_user_id, supabase);
           toolResult = { assignments, total_assigned: assignments.length };
           state.assignments = assignments;
           if (matched_issues && matched_issues.length > 0) {
@@ -509,7 +531,7 @@ You MUST execute the 4-step tool sequence. Once you have the results from 'match
   if (state.issues.length > 0 && state.assignments.length === 0 && volunteers.length > 0) {
     console.log("[VertexAgent] Safety net: running match_volunteers automatically.");
     try {
-      const { assignments, matched_issues } = await matchVolunteersLogic(state.issues, volunteers);
+      const { assignments, matched_issues } = await matchVolunteersLogic(state.issues, volunteers, ngo_user_id, supabase);
       state.assignments = assignments;
       if (matched_issues && matched_issues.length > 0) state.issues = matched_issues;
       state.agentLogs.push({

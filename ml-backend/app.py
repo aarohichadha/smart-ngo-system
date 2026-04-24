@@ -45,10 +45,15 @@ else:
     print("WARNING: Supabase credentials are not fully set.")
 
 # Disable ChromaDB telemetry warnings
-os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+os.environ["CHROMA_SERVER_NO_TELEMETRY"] = "1"
 
 # Initialize ChromaDB (persistent local storage in 'db' folder)
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
+from chromadb.config import Settings
+chroma_client = chromadb.PersistentClient(
+    path="./chroma_db",
+    settings=Settings(anonymized_telemetry=False)
+)
 # Using a specific collection for our RAG
 collection = chroma_client.get_or_create_collection(
     name="ngo_reports_local",
@@ -414,7 +419,7 @@ User Question: {query}
 Answer:"""
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(temperature=0.3)
@@ -443,25 +448,38 @@ def smart_analysis():
         return jsonify({"error": "ngo_user_id is required"}), 400
 
     # --- 1. Pull from Supabase ---
-    issues_text = "No historical issues found."
+    unassigned_text = "No active unassigned issues."
+    history_text = "No historical issues found."
     volunteers_text = "No volunteers found."
-    reports_text = "No run agent reports found."
 
     if supabase:
         try:
-            issues_res = supabase.table("issues").select("*").eq("ngo_user_id", ngo_user_id).execute()
+            issues_res = supabase.table("issues").select("*").eq("ngo_user_id", ngo_user_id).order("created_at", desc=True).limit(30).execute()
             issues = issues_res.data or []
-            if issues:
-                lines = ["Historical Issues Log:"]
-                for iss in issues:
-                    lines.append(
-                        f"- [{iss.get('sector','N/A')}] {iss.get('issue_summary','N/A')} | "
-                        f"Location: {iss.get('location','N/A')} | "
-                        f"Affected: {iss.get('affected_count','?')} | "
-                        f"Urgency: {iss.get('urgency_score','?')} | "
-                        f"Status: {iss.get('status','N/A')}"
-                    )
-                issues_text = "\n".join(lines)
+            
+            # Separate active unassigned vs historical
+            unassigned_issues = [iss for iss in issues if iss.get('status') == 'unassigned']
+            historical_issues = [iss for iss in issues if iss.get('status') != 'unassigned']
+
+            if unassigned_issues:
+                lines = ["Current UNASSIGNED Crises:"]
+                for iss in unassigned_issues:
+                    lines.append(f"- [{iss.get('sector','N/A')}] {iss.get('issue_summary','N/A')} | Location: {iss.get('location','N/A')} | Urgency: {iss.get('urgency_score','?')}")
+                unassigned_text = "\n".join(lines)
+                
+            if historical_issues:
+                lines = ["Historical/Assigned Issues Log (for context only):"]
+                for iss in historical_issues[:15]:
+                    lines.append(f"- [{iss.get('sector','N/A')}] {iss.get('issue_summary','N/A')} | Status: {iss.get('status','N/A')}")
+                history_text = "\n".join(lines)
+                
+            # Build volunteer workload map
+            vol_loads = {}
+            for iss in historical_issues:
+                if iss.get('status') == 'assigned' and iss.get('assigned_volunteer_id'):
+                    vid = iss.get('assigned_volunteer_id')
+                    vol_loads[vid] = vol_loads.get(vid, 0) + 1
+
         except Exception as e:
             print(f"Supabase issues fetch error: {e}")
 
@@ -469,13 +487,15 @@ def smart_analysis():
             vols_res = supabase.table("volunteers").select("*").eq("ngo_user_id", ngo_user_id).eq("is_active", True).execute()
             volunteers = vols_res.data or []
             if volunteers:
-                lines = ["Active Volunteers:"]
+                lines = ["Active Volunteers (with Current Workload):"]
                 for vol in volunteers:
+                    active_load = vol_loads.get(vol.get('id'), 0)
                     lines.append(
                         f"- ID:{vol.get('id','')} | Name: {vol.get('name','N/A')} | "
                         f"Skills: {', '.join(vol.get('skills') or [])} | "
                         f"Zone: {vol.get('zone','N/A')} | "
-                        f"Availability: {vol.get('availability_hours_per_week','?')}h/week"
+                        f"Availability: {vol.get('availability_hours_per_week','?')}h/week | "
+                        f"CURRENT ACTIVE ISSUES: {active_load}"
                     )
                 volunteers_text = "\n".join(lines)
         except Exception as e:
@@ -510,11 +530,11 @@ def smart_analysis():
     prompt = f"""You are an expert NGO operations analyst. Based on the data below, perform a comprehensive smart analysis.
 
 ## DATABASE RECORDS
-{issues_text}
+{unassigned_text}
+
+{history_text}
 
 {volunteers_text}
-
-{reports_text}
 
 ## UPLOADED REPORT CONTEXT
 {report_context}
@@ -531,7 +551,9 @@ Analyze all the data above and return a JSON object with EXACTLY this structure:
       "urgency": "high|medium|low",
       "confidence": "high|medium|low",
       "timeframe": "e.g. next 2 weeks",
-      "resolution": "Actionable strategy or steps to safely prevent or mitigate this ongoing issue"
+      "resolution": "Actionable strategy or steps to safely prevent or mitigate this ongoing issue",
+      "resource_allocation": [{{"item": "Item name", "quantity": 100, "priority": "high|medium|low", "reason": "Explanation"}}],
+      "overall_risk_assessment": "Specific risk assessment paragraph for this prediction"
     }}
   ],
   "assignments": [
@@ -544,20 +566,14 @@ Analyze all the data above and return a JSON object with EXACTLY this structure:
         "name": "Volunteer Name",
         "skills": ["skill1", "skill2"],
         "zone": "zone name",
-        "reason": "Why this volunteer is the best match"
+        "reason": "Why this volunteer is the best match AND has safe capacity"
       }},
       "backup_volunteers": [
         {{
-          "name": "Backup Name 1",
+          "name": "Backup Name",
           "skills": ["skill1"],
           "zone": "zone",
-          "reason": "Why this person is a good backup"
-        }},
-        {{
-          "name": "Backup Name 2",
-          "skills": ["skill1"],
-          "zone": "zone",
-          "reason": "Why this person is a good backup"
+          "reason": "Used because preferred volunteer is at full capacity"
         }}
       ]
     }}
@@ -566,14 +582,16 @@ Analyze all the data above and return a JSON object with EXACTLY this structure:
 }}
 
 IMPORTANT:
-- Base assignments ONLY on the volunteers listed above
-- If no active volunteers match or are available with required skills for an issue, YOU MUST set primary_volunteer to exactly null. We will automatically use this to fire a community request!
+- ONLY make assignments for items in the "Current UNASSIGNED Crises" section. DO NOT assign historical issues!
+- Base assignments ONLY on the active volunteers listed above.
+- RESPECT WORKLOAD: If a perfectly skilled volunteer already has 1 or more ACTIVE ISSUES, pass the primary assignment to the Backup Volunteer to spread the load.
+- If no active volunteers match, or all matches are dangerously overloaded, YOU MUST set primary_volunteer to exactly null to trigger an external community request!
 - For any prediction, provide a thoroughly actionable resolution strategy.
-- Return ONLY valid JSON. No markdown, no explanation outside the JSON.
+- Return ONLY valid JSON. No markdown.
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(temperature=0.2)
@@ -624,6 +642,30 @@ IMPORTANT:
                         print("Automated community post created for missing volunteer.")
                     except Exception as e:
                         print(f"Failed to post automated request: {e}")
+
+
+            # Persist individual predictions to the new smart_predictions table
+            try:
+                preds = result.get("predictions", [])
+                if preds:
+                    insert_data = []
+                    for p in preds:
+                        insert_data.append({
+                            "ngo_user_id": ngo_user_id,
+                            "title": p.get("title", ""),
+                            "description": p.get("description", ""),
+                            "sector": p.get("sector", "unknown"),
+                            "urgency": p.get("urgency", "low"),
+                            "confidence": p.get("confidence", "low"),
+                            "timeframe": p.get("timeframe", ""),
+                            "resolution": p.get("resolution", ""),
+                            "resource_allocation": p.get("resource_allocation", []),
+                            "overall_risk_assessment": p.get("overall_risk_assessment", "")
+                        })
+                    supabase.table("smart_predictions").insert(insert_data).execute()
+                    print("Smart predictions persisted separately.")
+            except Exception as e:
+                print(f"Failed to persist individual smart predictions: {e}")
 
         return jsonify({"success": True, "analysis": result}), 200
     except Exception as e:
@@ -725,5 +767,5 @@ def rehydrate_chroma():
 rehydrate_chroma()
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 5001))
     app.run(host='0.0.0.0', port=port, debug=True)

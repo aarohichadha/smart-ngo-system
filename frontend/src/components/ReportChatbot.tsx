@@ -28,6 +28,8 @@ interface Prediction {
   confidence: "high" | "medium" | "low";
   timeframe: string;
   resolution?: string;
+  overall_risk_assessment?: string;
+  resource_allocation?: Array<{ item: string; quantity: number | string }>;
 }
 
 interface VolunteerBrief {
@@ -934,7 +936,28 @@ export function ReportChatbot() {
                                 <p className="text-xs text-muted-foreground leading-relaxed">{pred.resolution}</p>
                               </div>
                             )}
-                            <div className="flex items-center gap-3 flex-wrap">
+                            {pred.overall_risk_assessment && (
+                              <div className="bg-rose-50/80 p-3 rounded-md border border-rose-200 mt-2 mb-2">
+                                <h5 className="flex items-center gap-1.5 text-xs font-semibold text-rose-800 mb-1">
+                                  <AlertTriangle className="w-3.5 h-3.5" /> Risk Assessment
+                                </h5>
+                                <p className="text-xs text-rose-900 leading-relaxed">{pred.overall_risk_assessment}</p>
+                              </div>
+                            )}
+                            {pred.resource_allocation && pred.resource_allocation.length > 0 && (
+                              <div className="mt-2 mb-2">
+                                <h5 className="text-xs font-semibold text-foreground mb-1">Suggested Resource Allocation</h5>
+                                <ul className="space-y-1">
+                                  {pred.resource_allocation.map((alloc, idx) => (
+                                    <li key={idx} className="flex justify-between items-center text-xs bg-muted/40 p-1.5 rounded border border-border/50">
+                                      <span className="font-medium text-muted-foreground">{alloc.item}</span>
+                                      <span className="text-muted-foreground">Qty: {alloc.quantity}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 flex-wrap mt-2">
                               <span className="text-xs bg-muted text-muted-foreground px-2 py-1 rounded-md">{pred.sector}</span>
                               <span className="text-xs text-muted-foreground">⏳ {pred.timeframe}</span>
                               <span className={`text-xs px-2 py-0.5 rounded-md ${pred.confidence === 'high' ? 'text-green-700 bg-green-50' : pred.confidence === 'medium' ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'}`}>
