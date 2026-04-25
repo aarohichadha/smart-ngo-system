@@ -1,5 +1,5 @@
 const path = require("path");
-const { loadOrchestratorModule } = require("./loadOrchestrator.cjs");
+const { runVertexAgent } = require("../services/vertexAgentService.cjs");
 
 const PRIORITY_LABELS = [
   { min: 8, label: "High" },
@@ -132,21 +132,6 @@ async function getReportWithNgoOwner({ supabase, reportId, fallbackNgoUserId = n
   return { reportRow, ngoUserId };
 }
 
-function buildBaseState(rawInput, volunteers) {
-  return {
-    rawInput: String(rawInput || ""),
-    issues: [],
-    volunteers: (volunteers || []).map((volunteer) => ({
-      ...volunteer,
-      is_active: volunteer.is_active !== false,
-    })),
-    assignments: [],
-    alerts: [],
-    agentLogs: [],
-    currentStep: "starting",
-    isComplete: false,
-  };
-}
 
 function mapIssueInsertPayloads(issues, ngoUserId) {
   return (issues || []).map((issue) => ({
@@ -292,13 +277,9 @@ async function processReport({ supabase, payload }) {
   });
 
   const volunteers = await fetchActiveVolunteers({ supabase, ngoUserId });
-  const orchestrator = loadOrchestratorModule();
-
-  let state = buildBaseState(extractedText, volunteers);
-  state = await orchestrator.runIngestionAgent(state);
-  state = await orchestrator.runExtractionAgent(state);
-  state = await orchestrator.runScoringAgent(state);
-  state = await orchestrator.runGapDetectionAgent(state);
+  
+  // Rely entirely on Vertex AI to execute ReAct loop (extraction through assignment)
+  let state = await runVertexAgent(extractedText, volunteers, ngoUserId, supabase);
 
   const agentRunId = await createAgentRun({ supabase, ngoUserId, state });
   const insertedIssues = await persistIssues({ supabase, ngoUserId, state });
@@ -415,25 +396,14 @@ async function assignVolunteers({ supabase, payload }) {
     throw new Error("No issues available for assignment.");
   }
 
-  const orchestrator = loadOrchestratorModule();
+  // Vertex AI already handled assignments during processReport.
+  // We simply read the current assignments from the already processed issues.
   let state = {
-    rawInput: pipelineResult.extracted_text || "",
     issues: hydratedIssues,
     volunteers,
-    assignments: [],
-    alerts: Array.isArray(pipelineResult?.pre_assignment_state?.alerts)
-      ? pipelineResult.pre_assignment_state.alerts
-      : [],
-    agentLogs: Array.isArray(pipelineResult?.pre_assignment_state?.agentLogs)
-      ? pipelineResult.pre_assignment_state.agentLogs
-      : [],
-    currentStep: "gap_detection",
-    isComplete: false,
+    alerts: pipelineResult?.pre_assignment_state?.alerts || [],
+    agentLogs: pipelineResult?.pre_assignment_state?.agentLogs || [],
   };
-
-  state = await orchestrator.runMatchingAgent(state);
-  state = await orchestrator.runReallocationAgent(state);
-  state = await orchestrator.runReportAgent(state);
 
   await persistAssignments({ supabase, issueIds, finalIssues: state.issues });
 

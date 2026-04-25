@@ -527,67 +527,67 @@ def smart_analysis():
         print(f"ChromaDB query error: {e}")
 
     # --- 3. Build Gemini Prompt ---
-    prompt = f"""You are an expert NGO operations analyst. Based on the data below, perform a comprehensive smart analysis.
+    prompt = f"""You are an NGO Operations Strategist. Your goal is to cross-reference our Database Records with recent Field Reports to find gaps.
 
-## DATABASE RECORDS
+## DATABASE RECORDS (What we already know)
+- UNASSIGNED CRISES IN DB:
 {unassigned_text}
 
+- HISTORICAL CONTEXT:
 {history_text}
 
+- VOLUNTEER CAPACITY:
 {volunteers_text}
 
-## UPLOADED REPORT CONTEXT
+## UPLOADED REPORT CONTEXT (Raw data from the field)
 {report_context}
 
 ## YOUR TASK
-Analyze all the data above and return a JSON object with EXACTLY this structure:
+Perform a deep analysis. Do not just summarize what is already in the database. 
+1. **Identify Missing Issues**: Find problems mentioned in the "Uploaded Report Context" that ARE NOT listed in the "UNASSIGNED CRISES IN DB". These are newly discovered gaps.
+2. **Predictive Risk**: Forecast what will happen in the next 48-72 hours if these specific issues aren't addressed.
+3. **Optimized Placement**: Assign volunteers to the DB issues, ensuring workload is safe.
+
+Return a JSON object with this structure:
 
 {{
   "predictions": [
     {{
-      "title": "Short prediction title",
-      "description": "Detailed prediction about upcoming needs based on patterns",
-      "sector": "relevant sector",
+      "title": "A tactical forecast (e.g. 'Potential Water Disease Outbreak')",
+      "description": "Specific reasoning linking report data to DB history",
+      "sector": "sector",
       "urgency": "high|medium|low",
       "confidence": "high|medium|low",
-      "timeframe": "e.g. next 2 weeks",
-      "resolution": "Actionable strategy or steps to safely prevent or mitigate this ongoing issue",
-      "resource_allocation": [{{"item": "Item name", "quantity": 100, "priority": "high|medium|low", "reason": "Explanation"}}],
-      "overall_risk_assessment": "Specific risk assessment paragraph for this prediction"
+      "timeframe": "48h-72h",
+      "resolution": "Specific preventative tactical operation to stop the trend",
+      "resource_allocation": [{{"item": "Medication", "quantity": "500 units", "priority": "high", "reason": "Based on trend X"}}],
+      "overall_risk_assessment": "How this impacts the NGO's mission",
+      "needed_skills": ["List", "of", "skills", "needed", "for", "prevention"]
     }}
   ],
   "assignments": [
     {{
-      "issue_summary": "Brief issue description",
-      "sector": "sector name",
+      "issue_summary": "Description of unassigned issue",
+      "type": "database_sync" | "discovered_from_report",
+      "sector": "sector",
       "location": "location",
       "urgency_score": 8,
       "primary_volunteer": {{
-        "name": "Volunteer Name",
-        "skills": ["skill1", "skill2"],
-        "zone": "zone name",
-        "reason": "Why this volunteer is the best match AND has safe capacity"
+         "name": "Name",
+         "skills": ["skill1"],
+         "zone": "zone",
+         "reason": "Why they are safe/optimized"
       }},
-      "backup_volunteers": [
-        {{
-          "name": "Backup Name",
-          "skills": ["skill1"],
-          "zone": "zone",
-          "reason": "Used because preferred volunteer is at full capacity"
-        }}
-      ]
+      "backup_volunteers": []
     }}
   ],
-  "summary": "A 2-3 sentence executive summary of the overall situation and key recommendations"
+  "summary": "High-level strategic overview of gaps found between reports and the database."
 }}
 
 IMPORTANT:
-- ONLY make assignments for items in the "Current UNASSIGNED Crises" section. DO NOT assign historical issues!
-- Base assignments ONLY on the active volunteers listed above.
-- RESPECT WORKLOAD: If a perfectly skilled volunteer already has 1 or more ACTIVE ISSUES, pass the primary assignment to the Backup Volunteer to spread the load.
-- If no active volunteers match, or all matches are dangerously overloaded, YOU MUST set primary_volunteer to exactly null to trigger an external community request!
-- For any prediction, provide a thoroughly actionable resolution strategy.
-- Return ONLY valid JSON. No markdown.
+- If you find a new issue in the 'Uploaded Report Context' that isn't in the DB, add it to 'assignments' with type 'discovered_from_report'.
+- For 'database_sync' issues, use the exact data provided.
+- Return ONLY valid JSON.
 """
 
     try:
@@ -660,7 +660,8 @@ IMPORTANT:
                             "timeframe": p.get("timeframe", ""),
                             "resolution": p.get("resolution", ""),
                             "resource_allocation": p.get("resource_allocation", []),
-                            "overall_risk_assessment": p.get("overall_risk_assessment", "")
+                            "overall_risk_assessment": p.get("overall_risk_assessment", ""),
+                            "needed_skills": p.get("needed_skills", [])
                         })
                     supabase.table("smart_predictions").insert(insert_data).execute()
                     print("Smart predictions persisted separately.")

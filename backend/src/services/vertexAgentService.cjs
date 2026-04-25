@@ -230,7 +230,7 @@ async function matchVolunteersLogic(issues, volunteers, ngo_user_id, supabase) {
     if (bestMatch) {
       const backupMatch = scoredVolunteers.find(v => v.id !== bestMatch.id);
       const backupInfo = backupMatch
-        ? ` | Backup: ${backupMatch.name} (${backupMatch.matchScore}%)`
+        ? ` | Backup: ${backupMatch.name} (ID:${backupMatch.id})`
         : ' | No backup available';
 
       console.log(`[SmartMatch] Assigned issue ${i} → ${bestMatch.name} (${bestMatch.matchScore}% | cosine: ${bestMatch.cosinePercentage}% | overlap: ${bestMatch.overlapPercentage}%)`);
@@ -281,272 +281,184 @@ async function matchVolunteersLogic(issues, volunteers, ngo_user_id, supabase) {
 }
 
 
-/**
- * Tool definitions (Function Declarations)
- */
-const agentTools = [
-  {
-    function_declarations: [
-      {
-        name: "extract_issues",
-        description: "Parse the field report and return a structured list of actionable issues. You MUST include the 'issues' array in your call with every issue you find.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            raw_input: { type: SchemaType.STRING, description: "Raw field report text." },
-            issues: {
-              type: SchemaType.ARRAY,
-              description: "The list of issues you extracted from the report. REQUIRED.",
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  issue_summary: { type: SchemaType.STRING, description: "A concise description of the issue." },
-                  sector: { type: SchemaType.STRING, description: "Sector: water, healthcare, electricity, sanitation, food, education, shelter, safety, logistics, counseling, or other." },
-                  location: { type: SchemaType.STRING, description: "Location/area affected." },
-                  affected_count: { type: SchemaType.NUMBER, description: "Estimated number of people affected." },
-                  severity_hint: { type: SchemaType.STRING, description: "Severity: critical, high, medium, or low." }
-                },
-                required: ["issue_summary", "sector"]
-              }
-            }
-          },
-          required: ["raw_input", "issues"]
-        }
-      },
-      {
-        name: "score_issues",
-        description: "Calculate priority and urgency scores for the extracted issues.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            issues: {
-              type: SchemaType.ARRAY,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  issue_summary: { type: SchemaType.STRING },
-                  sector: { type: SchemaType.STRING },
-                  affected_count: { type: SchemaType.NUMBER },
-                  severity_hint: { type: SchemaType.STRING }
-                }
-              }
-            }
-          },
-          required: ["issues"]
-        }
-      },
-      {
-        name: "detect_gaps",
-        description: "Identify skill requirements and capacity gaps for a list of issues.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            issues: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT } }
-          },
-          required: ["issues"]
-        }
-      },
-      {
-        name: "match_volunteers",
-        description: "Assign issues to the best-fitting volunteers based on skills and location.",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            issues: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT } },
-            active_volunteers: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT } }
-          },
-          required: ["issues", "active_volunteers"]
-        }
-      }
-    ]
-  }
-];
+// --- DYNAMIC MULTI-AGENT ARCHITECTURE (STATE MACHINE) ---
 
 /**
- * Core ReAct Loop Execution
+ * Supervisor Agent - The Router
+ * Decides which agent to call next based on the current state.
  */
-async function runVertexAgent(rawInput, volunteers, ngo_user_id, supabase) {
-  console.log("[VertexAgent] Starting pipeline for input length:", rawInput?.length);
+async function supervisorRouter(state, logStep) {
+  logStep("Supervisor", "Analyzing State", "Determining next logical step or handling feedback loops.");
   
   const model = vertexAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     systemInstruction: {
       role: "system",
-      parts: [{
-        text: `You are the NGO Orchestrator Agent. Process field reports and assign volunteers. You MUST call all 4 tools in order before giving a final answer.
-
-MANDATORY TOOL SEQUENCE (do not skip any step):
-1. Call extract_issues — parse ALL problems from the report. Include the 'issues' array in your call.
-2. Call score_issues — pass the issues array from step 1 and add priority/urgency scores.
-3. Call detect_gaps — pass the scored issues to identify skill requirements.
-4. Call match_volunteers — pass the scored issues AND the active_volunteers list below. This step is REQUIRED.
-
-Do NOT give a final text answer until you have called match_volunteers.
-
-AVAILABLE VOLUNTEERS (pass these to match_volunteers as 'active_volunteers'):
-${JSON.stringify(volunteers)}
-
-EXPECTED OUTPUT:
-You MUST execute the 4-step tool sequence. Once you have the results from 'match_volunteers', provide a concise 'NGO Action Plan Summary' as your final text response. Do not stop until assignments are complete.`
-      }]
+      parts: [{ text: `You are the NGO AI Supervisor. Your job is to orchestrate a team of agents: Planner, Scorer, and Matcher.
+      
+      RULES:
+      1. If the state is 'init', route to 'planner'.
+      2. If issues are extracted but not scored, route to 'scorer'.
+      3. If issues are scored but not matched, route to 'matcher'.
+      4. If the Matcher or Scorer reports critical gaps/unassigned issues in 'messages', route to 'planner' with instructions to 'draft_escalation'.
+      5. If all issues are processed or no further action is possible, call 'finalize_pipeline'.
+      
+      CURRENT MESSAGES FROM AGENTS:
+      ${JSON.stringify(state.messages)}` }]
     },
-    tools: agentTools,
-    generationConfig: {
-      temperature: 0.1, // Low temperature for consistent tool calling
-      topP: 0.95,
-      maxOutputTokens: 2048,
-    }
+    tools: [{
+      function_declarations: [
+        { name: "route_to_planner", description: "Direct the system to the Planner Agent to extract issues or draft escalation posts.", parameters: { type: SchemaType.OBJECT, properties: { instruction: { type: SchemaType.STRING, description: "Instructions for the planner: 'extract' or 'draft_escalation'" } }, required: ["instruction"] } },
+        { name: "route_to_scorer", description: "Direct the system to the Scoring Agent to prioritize issues.", parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: "route_to_matcher", description: "Direct the system to the Matching Agent to assign volunteers.", parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: "finalize_pipeline", description: "End the process and provide a final summary report.", parameters: { type: SchemaType.OBJECT, properties: { summary: { type: SchemaType.STRING, description: "A concise executive summary of the NGO action plan." } }, required: ["summary"] } }
+      ]
+    }],
+    generationConfig: { temperature: 0.1 }
   });
 
   const chat = model.startChat();
-  let state = {
+  const stateSummary = `Current Status: ${state.status}. Issues: ${state.issues.length}. Assignments: ${state.assignments.length}. Alerts: ${state.alerts.length}.`;
+  const result = await chat.sendMessage(stateSummary);
+  const part = result.response.candidates?.[0]?.content?.parts?.find(p => p.functionCall);
+
+  if (part) {
+    return { name: part.functionCall.name, args: part.functionCall.args };
+  }
+  
+  // Fallback to finishing if the model is confused
+  return { name: "finalize_pipeline", args: { summary: "Pipeline reached a terminal state unexpectedly." } };
+}
+
+async function plannerAgent(state, instruction, logStep) {
+  logStep("Planner Agent", "Acting", `Mode: ${instruction}`);
+  
+  if (instruction === 'extract') {
+    const model = vertexAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      systemInstruction: { role: "system", parts: [{ text: "Extract structured issues from this report. Call extract_issues tool." }] },
+      tools: [{ function_declarations: [{
+        name: "extract_issues",
+        parameters: { type: SchemaType.OBJECT, properties: { issues: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT, properties: { issue_summary: { type: SchemaType.STRING }, sector: { type: SchemaType.STRING }, location: { type: SchemaType.STRING }, affected_count: { type: SchemaType.NUMBER }, severity_hint: { type: SchemaType.STRING } }, required: ["issue_summary", "sector"] } } }, required: ["issues"] }
+      }] }],
+      generationConfig: { temperature: 0.1 }
+    });
+
+    try {
+      const result = await model.generateContent(`Report: ${state.rawInput}`);
+      const fc = result.response.candidates?.[0]?.content?.parts?.find(p => p.functionCall);
+      if (fc && fc.functionCall.args.issues) {
+        state.issues = fc.functionCall.args.issues.map(i => ({
+          ...i,
+          sector: sanitizeSector(i.sector),
+          severity_hint: i.severity_hint || inferSeverityHint(i.issue_summary),
+          status: 'unassigned',
+          created_at: new Date().toISOString()
+        }));
+        state.status = 'planned';
+        logStep("Planner Agent", "Success", `Extracted ${state.issues.length} issues.`);
+      }
+    } catch (e) { logStep("Planner Agent", "Error", e.message); }
+  } else {
+    // Draft Escalation Logic
+    logStep("Planner Agent", "Escalation", "Drafting automated community alerts for unassigned issues.");
+    state.alerts.push({ type: 'warning', message: "Emergency escalation initiated for unassigned critical needs.", severity: 'high' });
+    state.messages.push("Planner: Escalation alerts drafted and added to state.");
+    state.status = 'escalated';
+  }
+}
+
+async function scoringAgent(state, logStep) {
+  logStep("Scoring Agent", "Scoring", "Calculating priorities.");
+  const scored = await scoreIssuesLogic(state.issues);
+  state.issues = state.issues.map((i, idx) => ({ ...i, ...scored[idx] }));
+  
+  // Quick AI gap check
+  const model = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const result = await model.generateContent(`Analyze issues for gaps: ${JSON.stringify(state.issues)}`);
+  const analysis = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  
+  state.alerts.push({ type: 'info', message: "Urgency scores updated.", severity: 'info' });
+  state.status = 'scored';
+  logStep("Scoring Agent", "Success", "Issues scored and prioritized.");
+}
+
+async function matchingAgent(state, ngo_user_id, supabase, logStep) {
+  logStep("Matching Agent", "Matching", "Searching for best volunteer fits.");
+  const { assignments, matched_issues } = await matchVolunteersLogic(state.issues, state.volunteers, ngo_user_id, supabase);
+  
+  state.assignments = assignments;
+  state.issues = matched_issues;
+  state.status = 'matched';
+
+  const unassigned = state.issues.filter(i => i.status !== 'assigned' && (i.priority_score > 7 || i.severity_hint === 'critical'));
+  if (unassigned.length > 0) {
+    const msg = `Matcher: Found ${unassigned.length} critical issues that cannot be filled by current volunteers. Escalation required.`;
+    state.messages.push(msg);
+    logStep("Matching Agent", "Gaps Found", msg);
+  } else {
+    logStep("Matching Agent", "Success", `Assigned ${assignments.length} volunteers.`);
+  }
+}
+
+/**
+ * Core Dynamic Orchestrator
+ */
+async function runVertexAgent(rawInput, volunteers, ngo_user_id, supabase) {
+  console.log("[DynamicAgent] Starting autonomous pipeline.");
+  
+  const state = {
     rawInput,
     volunteers,
     issues: [],
     assignments: [],
     alerts: [],
     agentLogs: [],
-    currentStep: "starting",
-    isComplete: false
+    messages: [],
+    status: 'init',
+    isComplete: false,
+    finalReport: ""
   };
 
-  let message = [{ text: "Process this field report: " + rawInput }];
+  const logStep = (agent, decision, reasoning) => {
+    state.agentLogs.push({ agent, timestamp: new Date().toISOString(), decision, reasoning });
+  };
+
   let iterations = 0;
-  const maxIterations = 10;
+  const MAX_ITERATIONS = 6;
 
   try {
-    while (iterations < maxIterations) {
+    while (!state.isComplete && iterations < MAX_ITERATIONS) {
       iterations++;
-      console.log(`[VertexAgent] ReAct Iteration ${iterations}`);
+      console.log(`[DynamicAgent] Iteration ${iterations}, Status: ${state.status}`);
       
-      const result = await chat.sendMessage(message);
-      const response = result.response;
-
-      if (!response.candidates || response.candidates.length === 0) {
-        throw new Error("No response candidates returned from the model. This could be due to safety filters.");
-      }
-
-      const candidate = response.candidates[0];
-      const parts = candidate.content?.parts || [];
+      const action = await supervisorRouter(state, logStep);
       
-      // Find the "active" parts (text or function call)
-      const functionCallPart = parts.find(p => p.functionCall);
-      const textPart = parts.find(p => p.text);
-      const thoughtPart = parts.find(p => p.thought); // Support for future 'thought' field if versioned
-
-      const part = functionCallPart || textPart || thoughtPart || parts[0];
-
-      if (!part) {
-        console.warn("[VertexAgent] Empty response from model. Ending loop and using safety net.");
-        break;
-      }
-
-      // Record thought/action in logs
-      state.agentLogs.push({
-        agent: "NGO Orchestrator",
-        timestamp: new Date().toISOString(),
-        decision: part.functionCall 
-          ? `Decided to call ${part.functionCall.name}` 
-          : (part.text ? "Generating plan summary" : "Reasoning..."),
-        reasoning: thoughtPart?.thought || part.text || "Analyzing data to determine next action."
-      });
-
-      if (part.functionCall) {
-        const { name, args } = part.functionCall;
-        console.log(`[VertexAgent] Tool Execution: ${name}`);
-        
-        let toolResult;
-        if (name === "extract_issues") {
-          // Capture the issues the model extracted directly from its args
-          if (Array.isArray(args.issues) && args.issues.length > 0) {
-            state.issues = args.issues.map(issue => ({
-              ...issue,
-              sector: sanitizeSector(issue.sector),
-              severity_hint: issue.severity_hint || inferSeverityHint(issue.issue_summary || ''),
-              status: 'unassigned',
-              created_at: new Date().toISOString()
-            }));
-            console.log(`[VertexAgent] Captured ${state.issues.length} issues from model.`);
-          }
-          toolResult = {
-            status: "success",
-            issues_captured: state.issues.length,
-            message: `Captured ${state.issues.length} issues. Proceed to score_issues next.`
-          };
-        } else if (name === "score_issues") {
-          const scored = await scoreIssuesLogic(args.issues || state.issues);
-          toolResult = { scored_issues: scored };
-          // Sync state
-          if (args.issues) state.issues = args.issues;
-          state.issues = state.issues.map((i, idx) => ({ ...i, ...scored[idx] }));
-        } else if (name === "detect_gaps") {
-          const requirements = (args.issues || state.issues).map(i => ({ 
-            issue: i.issue_summary, 
-            needs: [normalizeSkillTag(i.sector)] 
-          }));
-          toolResult = { required_skills: requirements };
-          state.alerts.push({ type: 'info', message: "Skill requirements analyzed.", severity: "info" });
-        } else if (name === "match_volunteers") {
-          // Always use state.volunteers (loaded from Supabase) — never trust the model's args.active_volunteers
-          // as it may pass an empty array if it couldn't parse the system prompt correctly.
-          const issuesToMatch = (Array.isArray(args.issues) && args.issues.length > 0)
-            ? args.issues
-            : state.issues;
-          const volunteersToUse = (Array.isArray(state.volunteers) && state.volunteers.length > 0)
-            ? state.volunteers
-            : (Array.isArray(args.active_volunteers) && args.active_volunteers.length > 0)
-               ? args.active_volunteers
-               : volunteers;
-
-          console.log(`[VertexAgent] match_volunteers: ${issuesToMatch.length} issues, ${volunteersToUse.length} volunteers`);
-          const { assignments, matched_issues } = await matchVolunteersLogic(issuesToMatch, volunteersToUse, ngo_user_id, supabase);
-          toolResult = { assignments, total_assigned: assignments.length };
-          state.assignments = assignments;
-          if (matched_issues && matched_issues.length > 0) {
-            state.issues = matched_issues;
-          }
-        }
-
-        // Send observation back to chat
-        message = [{
-          functionResponse: {
-            name,
-            response: { content: toolResult }
-          }
-        }];
-      } else {
-        // Model returned final text summary
-        state.currentStep = "complete";
-        state.isComplete = true;
-        state.finalReport = part.text;
-        break;
+      switch (action.name) {
+        case 'route_to_planner':
+          await plannerAgent(state, action.args.instruction, logStep);
+          break;
+        case 'route_to_scorer':
+          await scoringAgent(state, logStep);
+          break;
+        case 'route_to_matcher':
+          await matchingAgent(state, ngo_user_id, supabase, logStep);
+          break;
+        case 'finalize_pipeline':
+          state.isComplete = true;
+          state.finalReport = action.args.summary;
+          logStep("Supervisor", "Finalizing", "Pipeline mission accomplished.");
+          break;
+        default:
+          state.isComplete = true;
+          break;
       }
     }
   } catch (error) {
-    console.error("[VertexAgent] Error in ReAct loop:", error);
-    state.alerts.push({ type: 'critical_unassigned', message: "Agent loop failed: " + error.message, severity: "critical" });
+    console.error("[DynamicAgent] Loop Error:", error);
+    logStep("System", "Error", error.message);
   }
 
-  // --- Safety Net: If issues were found but no volunteers were assigned, run matching now ---
-  if (state.issues.length > 0 && state.assignments.length === 0 && volunteers.length > 0) {
-    console.log("[VertexAgent] Safety net: running match_volunteers automatically.");
-    try {
-      const { assignments, matched_issues } = await matchVolunteersLogic(state.issues, volunteers, ngo_user_id, supabase);
-      state.assignments = assignments;
-      if (matched_issues && matched_issues.length > 0) state.issues = matched_issues;
-      state.agentLogs.push({
-        agent: "Safety Net",
-        timestamp: new Date().toISOString(),
-        decision: `Auto-assigned ${assignments.length} volunteer(s) to ${state.issues.length} issue(s).`,
-        reasoning: "Model completed without calling match_volunteers. Fallback matching executed."
-      });
-    } catch (matchErr) {
-      console.error("[VertexAgent] Safety net matching failed:", matchErr.message);
-    }
-  }
-
-  state.currentStep = "complete";
-  state.isComplete = true;
   return state;
 }
 

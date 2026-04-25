@@ -317,7 +317,27 @@ export default function ActionPlan() {
 
       const recommendedVolunteer = availableCandidates[0] || null;
       const bestVolunteerId = assignedVolunteer?.id || recommendedVolunteer?.volunteer.id || null;
-      const backupVolunteer = availableCandidates.find((candidate) => candidate.volunteer.id !== bestVolunteerId) || null;
+      
+      // Try to parse Agent's backup from internal reason string
+      let backupVolunteer: MatchResult | null = null;
+      const backupIdMatch = issue.assignment_reason?.match(/Backup: .*? \(ID:(.*?)\)/);
+      if (backupIdMatch && backupIdMatch[1]) {
+        const bId = backupIdMatch[1];
+        const bVol = volunteers.find(v => v.id === bId);
+        if (bVol) {
+          backupVolunteer = {
+            volunteer: bVol,
+            score: 0,
+            matchedSkills: bVol.skills || [],
+            currentLoad: assignedCounts[bVol.id] || 0
+          };
+        }
+      }
+
+      // Fallback to local logic if agent didn't provide one
+      if (!backupVolunteer) {
+        backupVolunteer = availableCandidates.find((candidate) => candidate.volunteer.id !== bestVolunteerId) || null;
+      }
 
       const matchedSkillsText = recommendedVolunteer?.matchedSkills.length
         ? (language === "hi"

@@ -30,6 +30,7 @@ interface Prediction {
   resolution?: string;
   overall_risk_assessment?: string;
   resource_allocation?: Array<{ item: string; quantity: number | string }>;
+  needed_skills?: string[];
 }
 
 interface VolunteerBrief {
@@ -41,6 +42,7 @@ interface VolunteerBrief {
 
 interface Assignment {
   issue_summary: string;
+  type?: "database_sync" | "discovered_from_report";
   sector: string;
   location: string;
   urgency_score: number;
@@ -183,6 +185,16 @@ export function ReportChatbot() {
       }
     };
     checkStats();
+
+    // Load persisted analysis from session storage or localStorage
+    const savedAnalysis = localStorage.getItem("last_smart_analysis");
+    if (savedAnalysis) {
+      try {
+        setAnalysis(JSON.parse(savedAnalysis));
+      } catch (e) {
+        console.error("Failed to parse saved analysis", e);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -437,6 +449,7 @@ export function ReportChatbot() {
       }
       const data = await res.json();
       setAnalysis(data.analysis);
+      localStorage.setItem("last_smart_analysis", JSON.stringify(data.analysis));
       toast.success("Smart analysis complete!");
     } catch (err: any) {
       toast.error(`Analysis error: ${err.message}`);
@@ -964,6 +977,21 @@ export function ReportChatbot() {
                                 {pred.confidence} confidence
                               </span>
                             </div>
+                            
+                            {pred.needed_skills && pred.needed_skills.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-border">
+                                <h5 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                                  <Users className="w-3 h-3" /> Required Volunteer Skills
+                                </h5>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {pred.needed_skills.map((skill, idx) => (
+                                    <Badge key={idx} variant="outline" className="text-[10px] bg-background border-primary/20 text-primary px-2 py-0">
+                                      {skill}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -986,6 +1014,11 @@ export function ReportChatbot() {
                               <div>
                                 <p className="font-semibold text-foreground text-sm">{asgn.issue_summary}</p>
                                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                  {asgn.type === "discovered_from_report" ? (
+                                    <Badge className="bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-200">New Finding from Report</Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="font-normal opacity-70">In Database</Badge>
+                                  )}
                                   <span className="text-xs bg-background border border-border px-2 py-0.5 rounded-md">{asgn.sector}</span>
                                   {asgn.location && <span className="text-xs text-muted-foreground">📍 {asgn.location}</span>}
                                 </div>
