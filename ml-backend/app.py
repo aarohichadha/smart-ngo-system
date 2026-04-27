@@ -436,11 +436,19 @@ Answer:"""
 @app.route('/api/smart-analysis', methods=['POST'])
 def smart_analysis():
     """
-    Runs a full smart analysis:
+    Runs Smart Analysis (forward-looking only):
     - Pulls historical issues + active volunteers from Supabase
+    - Pre-computes skill->volunteer availability table in Python (ground truth for Gemini)
     - Pulls relevant context from uploaded reports in ChromaDB
-    - Sends everything to Gemini for predictions + volunteer assignments
+    - Sends curated, pre-computed data to Gemini for forward-looking predictions and insights
+    - Assignment of volunteers to current issues is handled separately by the Vertex Agent
     """
+    import json as _json
+
+    # Each assigned issue consumes this many of a volunteer's weekly hours.
+    # A volunteer CAN hold multiple issues; each one burns HOURS_PER_ISSUE from their capacity.
+    HOURS_PER_ISSUE = 1
+
     data = request.json or {}
     ngo_user_id = data.get("ngo_user_id")
 
@@ -448,147 +456,271 @@ def smart_analysis():
         return jsonify({"error": "ngo_user_id is required"}), 400
 
     # --- 1. Pull from Supabase ---
-    unassigned_text = "No active unassigned issues."
-    history_text = "No historical issues found."
-    volunteers_text = "No volunteers found."
+    active_issues_text = "No active issues on record."
+    volunteers_text = "No volunteers on record."
+    skill_availability_table = ""   # pre-computed, injected verbatim into the prompt
+    volunteer_lookup = []           # Python-level records with computed fields
+
+    SKILL_LIST = ["Healthcare", "Water", "Electricity", "Sanitation", "Food",
+                  "Education", "Shelter", "Safety", "Logistics", "Counseling"]
 
     if supabase:
         try:
-            issues_res = supabase.table("issues").select("*").eq("ngo_user_id", ngo_user_id).order("created_at", desc=True).limit(30).execute()
+            # Fetch all active issues (unassigned + assigned) as live field signals
+            issues_res = supabase.table("issues").select(
+                "sector, issue_summary, location, urgency_score, status, affected_count"
+            ).eq("ngo_user_id", ngo_user_id).in_("status", ["unassigned", "assigned"]).execute()
             issues = issues_res.data or []
-            
-            # Separate active unassigned vs historical
-            unassigned_issues = [iss for iss in issues if iss.get('status') == 'unassigned']
-            historical_issues = [iss for iss in issues if iss.get('status') != 'unassigned']
 
-            if unassigned_issues:
-                lines = ["Current UNASSIGNED Crises:"]
-                for iss in unassigned_issues:
-                    lines.append(f"- [{iss.get('sector','N/A')}] {iss.get('issue_summary','N/A')} | Location: {iss.get('location','N/A')} | Urgency: {iss.get('urgency_score','?')}")
-                unassigned_text = "\n".join(lines)
-                
-            if historical_issues:
-                lines = ["Historical/Assigned Issues Log (for context only):"]
-                for iss in historical_issues[:15]:
-                    lines.append(f"- [{iss.get('sector','N/A')}] {iss.get('issue_summary','N/A')} | Status: {iss.get('status','N/A')}")
-                history_text = "\n".join(lines)
-                
-            # Build volunteer workload map
-            vol_loads = {}
-            for iss in historical_issues:
-                if iss.get('status') == 'assigned' and iss.get('assigned_volunteer_id'):
-                    vid = iss.get('assigned_volunteer_id')
-                    vol_loads[vid] = vol_loads.get(vid, 0) + 1
-
+            if issues:
+                lines = ["CURRENT ACTIVE ISSUES IN THE FIELD:"]
+                for iss in issues:
+                    lines.append(
+                        f"- [{iss.get('sector','N/A').upper()}] {iss.get('issue_summary','N/A')} "
+                        f"| Location: {iss.get('location','N/A')} "
+                        f"| Urgency: {iss.get('urgency_score','?')} "
+                        f"| Affected: {iss.get('affected_count','?')} "
+                        f"| Status: {iss.get('status','N/A')}"
+                    )
+                active_issues_text = "\n".join(lines)
+            print(f"Fetched {len(issues)} active issues for context.")
         except Exception as e:
             print(f"Supabase issues fetch error: {e}")
 
         try:
-            vols_res = supabase.table("volunteers").select("*").eq("ngo_user_id", ngo_user_id).eq("is_active", True).execute()
+            # Count assigned issues per volunteer (each issue burns HOURS_PER_ISSUE from capacity)
+            assigned_res = supabase.table("issues").select(
+                "assigned_volunteer_id"
+            ).eq("ngo_user_id", ngo_user_id).eq("status", "assigned").not_.is_(
+                "assigned_volunteer_id", "null"
+            ).execute()
+            vol_loads: dict = {}
+            for row in (assigned_res.data or []):
+                vid = row.get("assigned_volunteer_id")
+                if vid:
+                    vol_loads[vid] = vol_loads.get(vid, 0) + 1
+            print(f"Active assignment counts: {vol_loads}")
+        except Exception as e:
+            vol_loads = {}
+            print(f"Supabase workload fetch error: {e}")
+
+        try:
+            # Fetch volunteers and compute remaining hours with the HOURS_PER_ISSUE multiplier
+            vols_res = supabase.table("volunteers").select(
+                "id, name, skills, zone, availability_hours_per_week, is_active"
+            ).eq("ngo_user_id", ngo_user_id).eq("is_active", True).execute()
             volunteers = vols_res.data or []
+
             if volunteers:
-                lines = ["Active Volunteers (with Current Workload):"]
+                roster_lines = [
+                    "ACTIVE VOLUNTEER ROSTER:",
+                    f"NOTE: Each assigned issue consumes {HOURS_PER_ISSUE}h of a volunteer's weekly capacity.",
+                    "      A volunteer CAN hold multiple issues simultaneously.",
+                    "      Remaining Hours = Weekly Hours - (Assigned Issues x 1h per issue)",
+                    "      AVAILABLE = Remaining Hours > 0 | UNAVAILABLE = Remaining Hours = 0",
+                    "",
+                ]
                 for vol in volunteers:
-                    active_load = vol_loads.get(vol.get('id'), 0)
-                    lines.append(
-                        f"- ID:{vol.get('id','')} | Name: {vol.get('name','N/A')} | "
-                        f"Skills: {', '.join(vol.get('skills') or [])} | "
-                        f"Zone: {vol.get('zone','N/A')} | "
-                        f"Availability: {vol.get('availability_hours_per_week','?')}h/week | "
-                        f"CURRENT ACTIVE ISSUES: {active_load}"
+                    total_hrs = vol.get('availability_hours_per_week') or 10
+                    assigned_count = vol_loads.get(vol.get('id'), 0)
+                    hours_used = assigned_count * HOURS_PER_ISSUE
+                    remaining = max(0, total_hrs - hours_used)
+                    is_available = remaining > 0
+                    status_tag = "AVAILABLE" if is_available else "UNAVAILABLE"
+                    skills_list = vol.get('skills') or []
+                    skills_str = ', '.join(skills_list) or 'None listed'
+
+                    roster_lines.append(
+                        f"- {vol.get('name', 'N/A')} | Skills: {skills_str} | "
+                        f"Zone: {vol.get('zone', 'N/A')} | "
+                        f"Weekly: {total_hrs}h | Assigned Issues: {assigned_count} | "
+                        f"Hours Used: {hours_used}h | Remaining: {remaining}h | {status_tag}"
                     )
-                volunteers_text = "\n".join(lines)
+                    volunteer_lookup.append({
+                        "name": vol.get('name', 'N/A'),
+                        "skills": [s.capitalize() for s in skills_list],
+                        "zone": vol.get('zone', 'N/A'),
+                        "assigned_count": assigned_count,
+                        "remaining_hours": remaining,
+                        "is_available": is_available,
+                    })
+
+                volunteers_text = "\n".join(roster_lines)
+
+            # --- Build pre-computed skill -> volunteer availability table ---
+            # This table is the GROUND TRUTH passed to Gemini. Gemini must not recalculate it.
+            skill_rows = []
+            for skill in SKILL_LIST:
+                available_vols = [
+                    v for v in volunteer_lookup
+                    if skill in v["skills"] and v["is_available"]
+                ]
+                exhausted_vols = [
+                    v for v in volunteer_lookup
+                    if skill in v["skills"] and not v["is_available"]
+                ]
+                if available_vols:
+                    avail_str = ", ".join(
+                        f"{v['name']} ({v['remaining_hours']}h left, zone: {v['zone']}, load: {v['assigned_count']} issues)"
+                        for v in available_vols
+                    )
+                    exhausted_str = ", ".join(v['name'] for v in exhausted_vols) or "none"
+                    skill_rows.append(
+                        f"  {skill}: COVERED — available: [{avail_str}] | exhausted: [{exhausted_str}]"
+                    )
+                elif exhausted_vols:
+                    exhausted_str = ", ".join(
+                        f"{v['name']} (0h left, {v['assigned_count']} issues)" for v in exhausted_vols
+                    )
+                    skill_rows.append(
+                        f"  {skill}: GAP (all matching volunteers exhausted) — [{exhausted_str}]"
+                    )
+                else:
+                    skill_rows.append(
+                        f"  {skill}: GAP (no volunteer with this skill in roster)"
+                    )
+
+            skill_availability_table = (
+                "PRE-COMPUTED SKILL AVAILABILITY TABLE\n"
+                "(Generated by system — do NOT override, recalculate, or second-guess this table):\n"
+                + "\n".join(skill_rows)
+            )
+
+            print(f"Fetched {len(volunteers)} active volunteers for context.")
+            print("=== VOLUNTEER ROSTER ===")
+            print(volunteers_text)
+            print("\n=== SKILL AVAILABILITY TABLE ===")
+            print(skill_availability_table)
+            print("=================================")
         except Exception as e:
             print(f"Supabase volunteers fetch error: {e}")
-            
-        try:
-            reports_res = supabase.table("run_agent_reports").select("*").eq("ngo_user_id", ngo_user_id).order('created_at', desc=True).limit(5).execute()
-            r_data = reports_res.data or []
-            if r_data:
-                lines = ["Recent Run Agent Pipeline Reports:"]
-                for rpt in r_data:
-                    lines.append(f"- Title: {rpt.get('title', 'N/A')} | Source: {rpt.get('source_type','N/A')} | Date: {rpt.get('created_at', 'N/A')}")
-                reports_text = "\n".join(lines)
-        except Exception as e:
-            print(f"Supabase run_agent_reports fetch error: {e}")
     else:
         print("WARNING: Supabase not available. Analysis will use report context only.")
 
     # --- 2. Pull uploaded report context from ChromaDB ---
-    report_context = "No reports uploaded to knowledge base yet."
-    total_docs = collection.count()
+    report_context = "No field reports uploaded to knowledge base yet."
     try:
-        query_emb = get_embedding("issues problems needs resource requirements sector location affected")
-        results = collection.query(query_embeddings=[query_emb], n_results=6, where={"ngo_user_id": ngo_user_id})
+        query_emb = get_embedding(
+            "issues problems needs resource requirements sector location affected volunteers capacity"
+        )
+        results = collection.query(
+            query_embeddings=[query_emb], n_results=5, where={"ngo_user_id": ngo_user_id}
+        )
         docs = results['documents'][0] if results['documents'] else []
         if docs:
-            report_context = "Relevant Excerpts from Uploaded Field Reports:\n\n" + "\n\n---\n\n".join(docs)
+            report_context = "EXCERPTS FROM UPLOADED FIELD REPORTS:\n\n" + "\n\n---\n\n".join(docs)
     except Exception as e:
         print(f"ChromaDB query error: {e}")
 
+
     # --- 3. Build Gemini Prompt ---
-    prompt = f"""You are an NGO Operations Strategist. Your goal is to cross-reference our Database Records with recent Field Reports to find gaps.
+    skill_vocabulary = ", ".join(SKILL_LIST)
 
-## DATABASE RECORDS (What we already know)
-- UNASSIGNED CRISES IN DB:
-{unassigned_text}
+    prompt = f"""You are a Senior NGO Operational Intelligence Analyst. Your role is strictly FORWARD-LOOKING.
+Do NOT assign volunteers to existing issues — that is handled by a separate system.
+Your job: forecast future crises, assess volunteer readiness using the pre-computed ground-truth data below, and surface strategic insights.
 
-- HISTORICAL CONTEXT:
-{history_text}
+## SKILL TAXONOMY (only valid skill values in this system)
+{skill_vocabulary}
+Never invent new skill names. Always use exact capitalisation from this list.
 
-- VOLUNTEER CAPACITY:
+## CURRENT FIELD DATA
+
+### Section A — Active Issues (Live Field Signals)
+Used for forecasting future risks. Do NOT re-process these as new assignments.
+{active_issues_text}
+
+### Section B — Volunteer Roster (Reference Only)
 {volunteers_text}
 
-## UPLOADED REPORT CONTEXT (Raw data from the field)
+### Section C — AUTHORITATIVE SKILL AVAILABILITY TABLE ← YOUR PRIMARY SOURCE OF TRUTH
+{skill_availability_table}
+
+THIS TABLE IS THE SINGLE SOURCE OF TRUTH FOR VOLUNTEER AVAILABILITY.
+- If a skill row says COVERED: Volunteers listed as "available" MUST be placed in ready_volunteers if that skill is needed.
+- If a skill row says GAP:
+    • "exhausted" volunteers MUST go into missing_requirements as "<Name> has no hours left".
+    • "no volunteer..." skills MUST go into missing_requirements as "No <Skill> volunteer in roster".
+- NEVER put a COVERED-available volunteer into missing_requirements.
+- NEVER put a GAP-exhausted volunteer into ready_volunteers.
+
+### Section D — Uploaded Field Reports (Raw Context)
 {report_context}
 
-## YOUR TASK
-Perform a deep analysis. Do not just summarize what is already in the database. 
-1. **Identify Missing Issues**: Find problems mentioned in the "Uploaded Report Context" that ARE NOT listed in the "UNASSIGNED CRISES IN DB". These are newly discovered gaps.
-2. **Predictive Risk**: Forecast what will happen in the next 48-72 hours if these specific issues aren't addressed.
-3. **Optimized Placement**: Assign volunteers to the DB issues, ensuring workload is safe.
+---
 
-Return a JSON object with this structure:
+## YOUR THREE TASKS
+
+### TASK 1 — Predict Future Crises (2 to 4 predictions)
+Forecast crises likely to emerge or escalate in the next 48-96 hours.
+- Prediction logic: Cite specific issues (Section A) or report signals (Section D).
+- Needed Skills: Identify 1-3 skills from the taxonomy required for prevention.
+- Matching Logic (CROSS-CHECKSection C):
+    • For every skill needed: If Section C says COVERED, add all listed available volunteers to 'ready_volunteers'.
+    • If Section C says GAP, add the specific reason to 'missing_requirements' and set capacity_gap = true.
+
+### TASK 2 — Volunteer Needs (Gap Analysis)
+For every 'capacity_gap' prediction, specify exactly what is missing: skill name, estimated count, zone, and urgency.
+
+### TASK 3 — Strategic Insights (3 to 5 insights)
+Surface operational intelligence (capacity_risk, blind_spot, skill_gap, coverage_ok, escalation_risk).
+BE SPECIFIC: Reference real names, zones, and hour counts from Section B/C.
+
+---
+
+Return ONLY valid JSON. No markdown fences. No preamble.
 
 {{
   "predictions": [
     {{
-      "title": "A tactical forecast (e.g. 'Potential Water Disease Outbreak')",
-      "description": "Specific reasoning linking report data to DB history",
-      "sector": "sector",
+      "title": "<Specific crisis forecast title>",
+      "description": "<2-3 sentence reasoning citing live data.>",
+      "sector": "<one of the taxonomy skills, lowercase>",
       "urgency": "high|medium|low",
       "confidence": "high|medium|low",
-      "timeframe": "48h-72h",
-      "resolution": "Specific preventative tactical operation to stop the trend",
-      "resource_allocation": [{{"item": "Medication", "quantity": "500 units", "priority": "high", "reason": "Based on trend X"}}],
-      "overall_risk_assessment": "How this impacts the NGO's mission",
-      "needed_skills": ["List", "of", "skills", "needed", "for", "prevention"]
+      "timeframe": "48-72h|72-96h",
+      "resolution": "<Action to prevent this crisis.>",
+      "needed_skills": ["<SkillFromTaxonomy>"],
+      "capacity_gap": false,
+      "missing_requirements": [],
+      "ready_volunteers": [
+        {{
+          "name": "<Name from Section C>",
+          "skills": ["<SkillFromTaxonomy>"],
+          "zone": "<Zone from roster>",
+          "current_load": "<assigned_count from Section B>",
+          "availability_hours": "<remaining_hours from Section B>"
+        }}
+      ]
     }}
   ],
-  "assignments": [
+  "volunteer_needs": [
     {{
-      "issue_summary": "Description of unassigned issue",
-      "type": "database_sync" | "discovered_from_report",
-      "sector": "sector",
-      "location": "location",
-      "urgency_score": 8,
-      "primary_volunteer": {{
-         "name": "Name",
-         "skills": ["skill1"],
-         "zone": "zone",
-         "reason": "Why they are safe/optimized"
-      }},
-      "backup_volunteers": []
+      "skill": "<SkillFromTaxonomy>",
+      "count_needed": "<integer>",
+      "zone": "<Zone from data>",
+      "urgency": "high|medium|low",
+      "linked_prediction": "<prediction title>",
+      "reason": "<Specific data-backed reason>"
     }}
   ],
-  "summary": "High-level strategic overview of gaps found between reports and the database."
+  "insights": [
+    {{
+      "type": "capacity_risk|blind_spot|skill_gap|coverage_ok|escalation_risk",
+      "title": "<Insight Title>",
+      "detail": "<Specific detail with names/hours.>",
+      "action": "<Managerial action needed>"
+    }}
+  ],
+  "summary": "<Overall health of the organization and top priority.>"
 }}
 
-IMPORTANT:
-- If you find a new issue in the 'Uploaded Report Context' that isn't in the DB, add it to 'assignments' with type 'discovered_from_report'.
-- For 'database_sync' issues, use the exact data provided.
-- Return ONLY valid JSON.
+CRITICAL VALIDATION:
+1. Every name in ready_volunteers MUST match Section C's "available" list for the given skill.
+2. If remaining_hours > 0, they MUST NOT be in missing_requirements.
+3. Use the exact skill names from the taxonomy.
 """
+
 
     try:
         model = genai.GenerativeModel("gemini-2.5-flash-lite")
@@ -606,47 +738,11 @@ IMPORTANT:
         result = json.loads(raw)
 
         if supabase:
-            assignments = result.get("assignments", [])
-            for assignment in assignments:
-                pv = assignment.get("primary_volunteer")
-                if pv is None:
-                    try:
-                        urgency_score = int(assignment.get("urgency_score", 5))
-                    except:
-                        urgency_score = 5
-
-                    urg_str = "low"
-                    if urgency_score >= 8: urg_str = "critical"
-                    elif urgency_score >= 6: urg_str = "high"
-                    elif urgency_score >= 4: urg_str = "medium"
-
-                    reason_text = "Skill shortage"
-                    b_vols = assignment.get("backup_volunteers", [])
-                    if b_vols and isinstance(b_vols, list) and isinstance(b_vols[0], dict):
-                        reason_text = b_vols[0].get("reason", reason_text)
-                    
-                    req_payload = {
-                        "owner_id": ngo_user_id,
-                        "title": assignment.get("issue_summary", "Help Needed"),
-                        "description": f"Automated Request: We urgently need volunteers for an ongoing crisis matching this criteria.\\nReason: {reason_text}\\nLocation: {assignment.get('location', 'N/A')}",
-                        "category": assignment.get("sector", "General"),
-                        "urgency": urg_str,
-                        "location": assignment.get("location", "N/A"),
-                        "volunteers_needed": 1,
-                        "funding_amount": 0,
-                        "skills_needed": [assignment.get("sector", "General")],
-                        "contact_method": "Platform Messaging"
-                    }
-                    try:
-                        supabase.table("ngo_requests").insert(req_payload).execute()
-                        print("Automated community post created for missing volunteer.")
-                    except Exception as e:
-                        print(f"Failed to post automated request: {e}")
-
-
-            # Persist individual predictions to the new smart_predictions table
+            # Persist predictions to the smart_predictions table
             try:
                 preds = result.get("predictions", [])
+                # Attach shared insights to each prediction row for easy retrieval
+                shared_insights = result.get("insights", [])
                 if preds:
                     insert_data = []
                     for p in preds:
@@ -659,14 +755,19 @@ IMPORTANT:
                             "confidence": p.get("confidence", "low"),
                             "timeframe": p.get("timeframe", ""),
                             "resolution": p.get("resolution", ""),
-                            "resource_allocation": p.get("resource_allocation", []),
-                            "overall_risk_assessment": p.get("overall_risk_assessment", ""),
-                            "needed_skills": p.get("needed_skills", [])
+                            "overall_risk_assessment": result.get("summary", ""),
+                            "needed_skills": p.get("needed_skills", []),
+                            "capacity_gap": p.get("capacity_gap", False),
+                            "missing_resources": p.get("missing_requirements", []),
+                            "ready_volunteers": p.get("ready_volunteers", []),
+                            "insights": shared_insights  # shared across all predictions in this run
                         })
                     supabase.table("smart_predictions").insert(insert_data).execute()
-                    print("Smart predictions persisted separately.")
+                    print(f"Persisted {len(insert_data)} smart predictions with {len(shared_insights)} insights.")
+                    if result.get("volunteer_needs"):
+                        print(f"Volunteer needs detected: {[n.get('skill') for n in result.get('volunteer_needs', [])]}")
             except Exception as e:
-                print(f"Failed to persist individual smart predictions: {e}")
+                print(f"Failed to persist smart predictions: {e}")
 
         return jsonify({"success": True, "analysis": result}), 200
     except Exception as e:

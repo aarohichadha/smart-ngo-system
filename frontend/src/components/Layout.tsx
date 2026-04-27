@@ -23,6 +23,7 @@ export default function Layout() {
     } else {
       await supabase.auth.signOut();
     }
+    localStorage.removeItem("last_smart_analysis");
     toast.success(t("auth.signedOut"));
     navigate("/auth");
   };

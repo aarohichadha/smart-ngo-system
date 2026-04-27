@@ -274,6 +274,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     await supabase.auth.signOut();
+    localStorage.removeItem("last_smart_analysis");
     setUser(null);
   };
 
