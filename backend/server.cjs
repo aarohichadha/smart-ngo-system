@@ -1220,6 +1220,9 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(500);
   }
 });
+app.get("/", (req, res) => {
+  res.send("Sahayak NGO System Backend is running!");
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
