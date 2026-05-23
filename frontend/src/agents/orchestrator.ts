@@ -59,7 +59,10 @@ export const runOrchestrator = async (
     const { data: { user } } = await supabase.auth.getUser();
     const ngo_user_id = user?.id;
 
-    const backendUrl = "http://localhost:3000"; // Our Node.js backend
+    const backendUrl =
+  import.meta.env.VITE_NODE_BACKEND_URL ||
+  import.meta.env.VITE_BACKEND_URL ||
+  "https://smart-ngo-system-209112805853.asia-south1.run.app";
     const response = await fetch(`${backendUrl}/api/run-vertex-agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

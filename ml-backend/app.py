@@ -15,8 +15,16 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 app = Flask(__name__)
-# Enable CORS for the React frontend (usually runs on port 5173 or 5174)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://smart-ngo-system-frontend-209112805853.asia-south2.run.app"
+        ]
+    }
+})
 
 # Configurations
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -90,7 +98,53 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
         start = end - overlap
     return chunks
 
+@app.route('/extract-text', methods=['POST', 'OPTIONS'])
+def extract_text():
+    """
+    Extract text from uploaded PDF/text file.
+    This endpoint is used by the frontend before falling back to local extraction.
+    """
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
 
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files['file']
+
+    if not file or file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = file.filename
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+
+    try:
+        text = ""
+
+        if ext == "pdf":
+            pdf_bytes = file.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            for page in doc:
+                text += page.get_text() + "\n"
+
+            doc.close()
+        else:
+            raw = file.read()
+            text = raw.decode("utf-8", errors="ignore")
+
+        return jsonify({
+            "success": True,
+            "fileName": filename,
+            "text": text.strip()
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to extract text: {str(e)}"
+        }), 500
+    
 def build_sync_report_title(issue_count: int) -> str:
     """Builds a human-readable title for a synced history snapshot."""
     timestamp = datetime.now(timezone.utc).strftime("%b %d, %Y %H:%M UTC")

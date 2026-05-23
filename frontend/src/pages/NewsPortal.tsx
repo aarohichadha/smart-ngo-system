@@ -28,9 +28,10 @@ export default function NewsPortal() {
     setLoading(true);
     setError('');
     try {
-      const serpBackendUrl = import.meta.env.VITE_SERP_BACKEND_URL
-        || import.meta.env.VITE_NODE_BACKEND_URL
-        || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+      const serpBackendUrl =
+  import.meta.env.VITE_SERP_BACKEND_URL ||
+  import.meta.env.VITE_NODE_BACKEND_URL ||
+  "https://smart-ngo-system-209112805853.asia-south1.run.app";
       const serpNewsUrl = serpBackendUrl.endsWith('/api/serp-news')
         ? serpBackendUrl
         : `${serpBackendUrl.replace(/\/api\/?$/, '')}/api/serp-news`;
