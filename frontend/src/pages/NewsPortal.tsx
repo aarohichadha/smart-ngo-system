@@ -28,10 +28,18 @@ export default function NewsPortal() {
     setLoading(true);
     setError('');
     try {
-      const serpBackendUrl = import.meta.env.VITE_SERP_BACKEND_URL || import.meta.env.VITE_NODE_BACKEND_URL || 'http://localhost:3000';
+      const serpBackendUrl = import.meta.env.VITE_SERP_BACKEND_URL
+        || import.meta.env.VITE_NODE_BACKEND_URL
+        || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
       const serpNewsUrl = serpBackendUrl.endsWith('/api/serp-news')
         ? serpBackendUrl
         : `${serpBackendUrl.replace(/\/api\/?$/, '')}/api/serp-news`;
+
+      // Helpful debug output to diagnose where the frontend is sending requests
+      // In production check the browser console for `Resolved SERP URL:` to confirm.
+      // Note: Vite inlines `import.meta.env.*` at build time, so adjust env vars and rebuild when needed.
+      // eslint-disable-next-line no-console
+      console.debug('Resolved SERP URL:', serpNewsUrl);
 
       const response = await fetch(serpNewsUrl, {
         method: 'POST',

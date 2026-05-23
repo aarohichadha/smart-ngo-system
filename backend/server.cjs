@@ -16,19 +16,18 @@ const app = express();
 app.use(express.json());
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const allowedOrigins = new Set([
-    'http://localhost:8080',
-    'http://127.0.0.1:8080',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:4173',
-    'http://127.0.0.1:4173',
-    'http://localhost:8080',
-    'http://127.0.0.1:8080',
-  ]);
+
+  // Allow configuring permitted origins via environment variable (comma-separated)
+  // Example: ALLOWED_ORIGINS="https://example.com,https://www.example.com"
+  const rawAllowed = process.env.ALLOWED_ORIGINS ||
+    'http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173';
+  const allowedOrigins = new Set(rawAllowed.split(',').map((s) => s.trim()).filter(Boolean));
+
   const isLocalhostOrigin = typeof origin === 'string' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
-  if (!origin || allowedOrigins.has(origin) || isLocalhostOrigin) {
+  // Allow if origin is not provided (non-browser), if origin is explicitly allowed,
+  // or if wildcard '*' is included in the ALLOWED_ORIGINS list.
+  if (!origin || allowedOrigins.has(origin) || allowedOrigins.has('*') || isLocalhostOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
   }
 
