@@ -8,7 +8,7 @@ const project = process.env.GCP_PROJECT_ID || "ngo-system-493616";
 const location = process.env.GCP_LOCATION || "us-central1";
 const vertexAI = new VertexAI({ project, location });
 
-const ML_BACKEND_URL = process.env.VITE_ML_BACKEND_URL || "http://localhost:5000";
+const ML_BACKEND_URL = process.env.ML_BACKEND_URL || "http://localhost:5000";
 
 // --- Logic Helpers (Ported from Orchestrator) ---
 
