@@ -1,13 +1,23 @@
 const { VertexAI, SchemaType } = require("@google-cloud/vertexai");
 const axios = require("axios");
 const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
+require("dotenv").config()
 // Initialize Vertex AI
 const project = process.env.GCP_PROJECT_ID || "ngo-system-493616";
 const location = process.env.GCP_LOCATION || "us-central1";
-const vertexAI = new VertexAI({ project, location });
 
+const credentials = JSON.parse(
+  process.env.GOOGLE_APPLICATION_CREDENTIALS
+);
+
+const vertexAI = new VertexAI({
+  project,
+  location,
+  googleAuthOptions: {
+    credentials,
+  },
+});
 const ML_BACKEND_URL = process.env.ML_BACKEND_URL || "http://localhost:5000";
 
 // --- Logic Helpers (Ported from Orchestrator) ---
