@@ -36,6 +36,7 @@ import {
   Heart,
   BrainCircuit,
   Newspaper,
+  Leaf,
 } from "lucide-react";
 
 const ngoNavItems = [
@@ -113,16 +114,16 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r-0">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border bg-sidebar">
       <SidebarHeader className="px-4 py-5">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
-            <Zap className="w-4 h-4 text-primary-foreground" />
+          <div className="w-7 h-7 rounded-full bg-[hsl(var(--clay-light))] border border-sidebar-border flex items-center justify-center flex-shrink-0">
+            <Leaf className="w-4 h-4 text-[hsl(var(--clay-dark))]" />
           </div>
           {!collapsed && (
             <div>
-              <h1 className="text-sidebar-primary font-bold text-base leading-tight">{t("sidebar.organization")}</h1>
-              <p className="text-sidebar-foreground/40 text-[10px] leading-tight">{t("sidebar.subtitle")}</p>
+              <h1 className="text-[hsl(var(--primary))] font-medium text-base leading-tight">{t("sidebar.organization")}</h1>
+              <p className="text-[hsl(var(--ink-3))] text-[10px] leading-tight">{t("sidebar.subtitle")}</p>
             </div>
           )}
         </div>
@@ -143,15 +144,15 @@ export function AppSidebar() {
                       <NavLink
                         to={item.url}
                         end={item.url === "/dashboard" || item.url === "/sponsor-portal"}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
+                        className={`flex items-center gap-3 px-3 py-2 rounded-[8px] transition-colors ${
                           item.accent && !isActive
-                            ? "text-sidebar-primary hover:bg-sidebar-accent"
-                            : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                            ? "text-[hsl(var(--clay-dark))] hover:bg-sidebar-accent"
+                            : "text-[hsl(var(--ink-2))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                         }`}
                         activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-medium"
                       >
                         <item.icon
-                          className={`w-4 h-4 flex-shrink-0 ${item.accent && !isActive ? "text-sidebar-primary" : ""}`}
+                          className={`w-4 h-4 flex-shrink-0 ${item.accent && !isActive ? "text-[hsl(var(--clay-dark))]" : ""}`}
                         />
                         {!collapsed && <span className="text-sm">{label}</span>}
                       </NavLink>
@@ -167,11 +168,11 @@ export function AppSidebar() {
 
       <SidebarFooter className="flex flex-col gap-2 px-4 py-3">
         {user && !collapsed && (
-          <div className="flex items-center gap-2 px-2 py-2 rounded-md bg-sidebar-accent/50">
-            <User className="w-4 h-4 text-sidebar-primary flex-shrink-0" />
+          <div className="flex items-center gap-2 px-2 py-2 rounded-[10px] bg-sidebar-accent/70 border border-sidebar-border">
+            <User className="w-4 h-4 text-[hsl(var(--clay-dark))] flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-medium text-sidebar-primary truncate">{user.email}</p>
-              <p className="text-[9px] text-sidebar-foreground/60 capitalize">
+              <p className="text-[11px] font-medium text-[hsl(var(--ink-2))] truncate">{user.email}</p>
+              <p className="text-[9px] text-[hsl(var(--ink-3))] capitalize">
                 {user.userType}
               </p>
             </div>

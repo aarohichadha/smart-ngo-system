@@ -9,7 +9,7 @@ interface LanguageContextValue {
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
-const STORAGE_KEY = "field-nexus-language";
+const STORAGE_KEY = "sahayak-language";
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 

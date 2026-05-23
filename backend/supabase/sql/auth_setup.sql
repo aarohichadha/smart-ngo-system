@@ -1,4 +1,4 @@
--- Field Nexus auth setup for Supabase
+-- Sahayak auth setup for Supabase
 -- Run this in Supabase SQL Editor.
 
 create extension if not exists pgcrypto;

@@ -1,6 +1,6 @@
-# Field Nexus
+# Sahayak
 
-Field Nexus is a React + TypeScript dashboard for coordinating field issues, volunteers, and agent-driven action planning.
+Sahayak is a React + TypeScript dashboard for coordinating field issues, volunteers, and agent-driven action planning.
 
 ## Tech Stack
 

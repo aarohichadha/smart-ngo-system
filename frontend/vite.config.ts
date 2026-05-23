@@ -12,6 +12,9 @@ export default defineConfig(() => ({
       host: "localhost",
       overlay: false,
     },
+    watch: {
+      ignored: ["**/.cache/**", "**/dist/**", "**/backend/**"]
+    },
     proxy: {
       "/api": {
         target: "http://localhost:5000",
