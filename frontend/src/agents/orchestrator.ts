@@ -63,11 +63,21 @@ export const runOrchestrator = async (
   import.meta.env.VITE_NODE_BACKEND_URL ||
   import.meta.env.VITE_BACKEND_URL ||
   "https://smart-ngo-system-209112805853.asia-south1.run.app";
-    const response = await fetch(`${backendUrl}/api/run-vertex-agent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rawInput, volunteers, ngo_user_id }),
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(`${backendUrl}/api/run-vertex-agent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rawInput, volunteers, ngo_user_id }),
+      });
+    } catch (fetchError: any) {
+      const isLocalBackend = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(backendUrl);
+      const hint = isLocalBackend
+        ? " Backend is not running on localhost:3000. Start it with: npm run dev:backend"
+        : "";
+      throw new Error(`${fetchError.message || "Failed to reach backend."}${hint}`);
+    }
 
     if (!response.ok) {
       const errText = await response.text();

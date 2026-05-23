@@ -704,6 +704,11 @@ export default function RunAgents() {
                       <span className="text-cyan-400">{log.agent}</span>
                       {" › "}
                       <span className="text-green-300">{log.decision}</span>
+                      {log.reasoning ? (
+                        <div className="mt-1 pl-4 text-green-400/70 whitespace-pre-wrap break-words">
+                          {log.reasoning}
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 )}
