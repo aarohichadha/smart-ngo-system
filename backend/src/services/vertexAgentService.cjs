@@ -3,39 +3,70 @@ const axios = require("axios");
 const fs = require("fs");
 require("dotenv").config();
 
-const project = process.env.GCP_PROJECT_ID || "ngo-system-493616";
-const location = process.env.GCP_LOCATION || "us-central1";
+const project = process.env.GCP_PROJECT_ID;
+const location = process.env.GCP_LOCATION;
 const ML_BACKEND_URL = process.env.ML_BACKEND_URL || "https://ml-backend-209112805853.asia-south2.run.app";
 
 function getGoogleAuthOptions() {
-  const rawCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const credentialEnvNames = [
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "VERTEX_AI_CREDENTIALS",
+    "GOOGLE_CREDENTIALS",
+    "GCP_CREDENTIALS",
+    "GOOGLE_SERVICE_ACCOUNT_JSON",
+  ];
 
-  if (!rawCreds) {
-    console.warn("[VertexAgent] GOOGLE_APPLICATION_CREDENTIALS is not set. Falling back to default auth.");
+  const detectedEnvName = credentialEnvNames.find((name) => {
+    const value = process.env[name];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+
+  if (!detectedEnvName) {
+    console.warn(
+      "[VertexAgent] No Google credentials env var found. Falling back to default Cloud Run service account auth."
+    );
     return {};
   }
 
+  const rawCreds = process.env[detectedEnvName].trim();
+  console.warn(`[VertexAgent] Google credentials detected in ${detectedEnvName}.`);
+
   try {
-    // Case 1: env contains full JSON string
     if (rawCreds.trim().startsWith("{")) {
       return {
         credentials: JSON.parse(rawCreds),
       };
     }
-
-    // Case 2: env contains file path
-    if (fs.existsSync(rawCreds)) {
-      return {
-        keyFilename: rawCreds,
-      };
-    }
-
-    console.warn("[VertexAgent] GOOGLE_APPLICATION_CREDENTIALS is neither JSON nor a valid file path.");
-    return {};
   } catch (error) {
-    console.error("[VertexAgent] Failed to parse Google credentials:", error.message);
+    console.error(
+      `[VertexAgent] Failed to parse JSON credentials from ${detectedEnvName}: ${error.message}`
+    );
     return {};
   }
+
+  try {
+    const decoded = Buffer.from(rawCreds, "base64").toString("utf8").trim();
+    if (decoded.startsWith("{")) {
+      return {
+        credentials: JSON.parse(decoded),
+      };
+    }
+  } catch (error) {
+    console.error(
+      `[VertexAgent] Failed to parse base64 JSON credentials from ${detectedEnvName}: ${error.message}`
+    );
+  }
+
+  if (fs.existsSync(rawCreds)) {
+    return {
+      keyFilename: rawCreds,
+    };
+  }
+
+  console.warn(
+    `[VertexAgent] ${detectedEnvName} was detected but is not JSON, base64 JSON, or a valid file path. Falling back to default auth.`
+  );
+  return {};
 }
 
 const vertexAI = new VertexAI({
