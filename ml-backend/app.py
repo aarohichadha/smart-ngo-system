@@ -920,7 +920,7 @@ def rehydrate_chroma():
     except Exception as e:
         print(f"Failed to rehydrate fallback: {e}")
 
-rehydrate_chroma()
+# rehydrate_chroma()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
